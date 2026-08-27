@@ -1,0 +1,23 @@
+flowchart LR
+    A[AWS sensors / simulator] --> B[Station logger]
+    B --> C[Edge gateway]
+    C -->|MQTT over TLS| D[Ingestion API / broker]
+    C --> E[Edge QC + offline buffer]
+    D --> F[Schema + unit normalizer]
+    F --> G[(Raw observation store)]
+    F --> H[Rule engine]
+    H --> I[Feature builder]
+    I --> J[Temporal detector]
+    I --> K[Spatial / buddy detector]
+    I --> L[Station-health detector]
+    J --> M[Evidence fusion]
+    K --> M
+    L --> M
+    H --> M
+    M --> N[(QC results + incidents)]
+    N --> O[Alerts / escalation]
+    N --> P[Operator dashboard]
+    P --> Q[Human review + labels]
+    Q --> R[Model evaluation / registry]
+    R --> J
+    N --> S[Quality-aware API / export]
