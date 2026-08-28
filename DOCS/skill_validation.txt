@@ -1,2 +1,0 @@
-🔍 Validating skill at: /home/ubuntu/skills/aws-anomaly-detection
-Skill is valid!
