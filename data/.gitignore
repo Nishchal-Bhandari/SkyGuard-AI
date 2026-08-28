@@ -1,0 +1,4 @@
+# Ignore runtime SQLite database binaries in git
+*.db
+*.db-shm
+*.db-wal
