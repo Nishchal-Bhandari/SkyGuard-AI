@@ -1,4 +1,4 @@
-# Team Collaborators & Responsibilities — Monsoon Sentinel (SkyGuard-AI)
+# Team Collaborators & Responsibilities — SkyGuard-AI
 
 ## Member 1 — Station metadata, schema & data contract
 
