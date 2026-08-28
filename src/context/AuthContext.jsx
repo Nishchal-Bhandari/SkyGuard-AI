@@ -1,0 +1,297 @@
+import React, { createContext, useContext, useState, useEffect } from 'react';
+
+const SEED_CREDENTIALS = {
+  admin: [
+    {
+      id: "admin-01",
+      username: "admin",
+      passwordHash: "sentinel2026",
+      name: "Chief Supervisor",
+      role: "admin",
+      status: "ACTIVE",
+      created_at: "2026-08-01T00:00:00Z",
+      last_login: new Date().toISOString()
+    }
+  ],
+  stations: [
+    {
+      stationId: "AWS-07",
+      stationName: "Hyderabad Central Met",
+      region: "Telangana South",
+      username: "aws07_op",
+      password: "hyd@2026",
+      status: "ACTIVE",
+      created_at: "2026-08-10T10:00:00Z",
+      last_login: "2026-08-28T14:22:10Z"
+    },
+    {
+      stationId: "AWS-08",
+      stationName: "Secunderabad Cantonment",
+      region: "Telangana South",
+      username: "aws08_op",
+      password: "sec@2026",
+      status: "ACTIVE",
+      created_at: "2026-08-10T10:00:00Z",
+      last_login: "2026-08-28T12:05:40Z"
+    },
+    {
+      stationId: "AWS-09",
+      stationName: "Cyberabad Hitech City",
+      region: "Telangana South",
+      username: "aws09_op",
+      password: "cyber@2026",
+      status: "ACTIVE",
+      created_at: "2026-08-10T10:00:00Z",
+      last_login: "2026-08-28T09:18:15Z"
+    },
+    {
+      stationId: "AWS-12",
+      stationName: "Mumbai Coastal Colaba",
+      region: "Maharashtra West",
+      username: "aws12_op",
+      password: "mum@2026",
+      status: "ACTIVE",
+      created_at: "2026-08-12T11:30:00Z",
+      last_login: "2026-08-27T18:40:00Z"
+    },
+    {
+      stationId: "AWS-13",
+      stationName: "Santacruz Airport Met",
+      region: "Maharashtra West",
+      username: "aws13_op",
+      password: "santa@2026",
+      status: "ACTIVE",
+      created_at: "2026-08-12T11:30:00Z",
+      last_login: "2026-08-28T08:15:30Z"
+    },
+    {
+      stationId: "AWS-19",
+      stationName: "Cherrapunji Hills Eco",
+      region: "Meghalaya East",
+      username: "aws19_op",
+      password: "cherra@2026",
+      status: "ACTIVE",
+      created_at: "2026-08-15T14:00:00Z",
+      last_login: "2026-08-28T15:45:00Z"
+    }
+  ]
+};
+
+const STORAGE_KEY = "monsoon_sentinel_auth";
+const CREDENTIALS_KEY = "monsoon_sentinel_credentials";
+
+const AuthContext = createContext(null);
+
+export const AuthProvider = ({ children }) => {
+  const [session, setSession] = useState(() => {
+    try {
+      const data = localStorage.getItem(STORAGE_KEY);
+      if (data) return JSON.parse(data);
+    } catch (e) {}
+    return {
+      isAuthenticated: false,
+      user: null,
+      role: null,
+      assignedStationId: null,
+      stationName: null,
+      token: null
+    };
+  });
+
+  const [credentials, setCredentials] = useState(() => {
+    try {
+      const data = localStorage.getItem(CREDENTIALS_KEY);
+      if (data) return JSON.parse(data);
+    } catch (e) {}
+    return JSON.parse(JSON.stringify(SEED_CREDENTIALS));
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    } catch (e) {}
+  }, [session]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(credentials));
+    } catch (e) {}
+  }, [credentials]);
+
+  const login = async (role, username, password) => {
+    await new Promise(resolve => setTimeout(resolve, 400));
+
+    if (!username || !password) {
+      return { success: false, error: "EMPTY_FIELDS", message: "Please provide both username and password." };
+    }
+
+    const cleanUser = username.trim().toLowerCase();
+
+    if (role === "admin") {
+      const adminUser = credentials.admin.find(
+        a => a.username.toLowerCase() === cleanUser && a.passwordHash === password
+      );
+
+      if (!adminUser) {
+        return { success: false, error: "INVALID_CREDENTIALS", message: "Invalid Central Admin username or password." };
+      }
+
+      if (adminUser.status !== "ACTIVE") {
+        return { success: false, error: "ACCOUNT_DEACTIVATED", message: "This Admin account has been deactivated." };
+      }
+
+      const updatedCreds = { ...credentials };
+      const matched = updatedCreds.admin.find(a => a.id === adminUser.id);
+      if (matched) matched.last_login = new Date().toISOString();
+      setCredentials(updatedCreds);
+
+      const newSession = {
+        isAuthenticated: true,
+        user: { id: adminUser.id, username: adminUser.username, name: adminUser.name },
+        role: "admin",
+        assignedStationId: null,
+        stationName: null,
+        token: `jwt-admin-${Date.now()}`
+      };
+      setSession(newSession);
+
+      return { success: true, role: "admin", user: newSession.user };
+    } else if (role === "station_operator") {
+      const stationCred = credentials.stations.find(
+        s => s.username.toLowerCase() === cleanUser && s.password === password
+      );
+
+      if (!stationCred) {
+        return { success: false, error: "INVALID_CREDENTIALS", message: "Invalid Station Operator username or password." };
+      }
+
+      if (stationCred.status !== "ACTIVE") {
+        return { success: false, error: "STATION_DEACTIVATED", message: `Access for station ${stationCred.stationId} is currently deactivated by Central Admin.` };
+      }
+
+      const updatedCreds = { ...credentials };
+      const matched = updatedCreds.stations.find(s => s.stationId === stationCred.stationId);
+      if (matched) matched.last_login = new Date().toISOString();
+      setCredentials(updatedCreds);
+
+      const newSession = {
+        isAuthenticated: true,
+        user: { username: stationCred.username, name: `${stationCred.stationId} Operator` },
+        role: "station_operator",
+        assignedStationId: stationCred.stationId,
+        stationName: stationCred.stationName,
+        token: `jwt-station-${stationCred.stationId}-${Date.now()}`
+      };
+      setSession(newSession);
+
+      return { success: true, role: "station_operator", stationId: stationCred.stationId, user: newSession.user };
+    }
+
+    return { success: false, error: "INVALID_ROLE", message: "Invalid authentication role specified." };
+  };
+
+  const logout = () => {
+    setSession({
+      isAuthenticated: false,
+      user: null,
+      role: null,
+      assignedStationId: null,
+      stationName: null,
+      token: null
+    });
+  };
+
+  const createStationCredential = (stationId, stationName, username, password, status = "ACTIVE") => {
+    const existing = credentials.stations.find(
+      s => s.stationId === stationId || s.username.toLowerCase() === username.toLowerCase().trim()
+    );
+    if (existing) {
+      return { success: false, message: `Credential already exists for station ${stationId} or username '${username}'.` };
+    }
+
+    const newCred = {
+      stationId,
+      stationName,
+      region: "Assigned Region",
+      username: username.trim(),
+      password,
+      status,
+      created_at: new Date().toISOString(),
+      last_login: null
+    };
+
+    setCredentials(prev => ({
+      ...prev,
+      stations: [...prev.stations, newCred]
+    }));
+    return { success: true, credential: newCred };
+  };
+
+  const updateStationCredential = (stationId, updates) => {
+    setCredentials(prev => ({
+      ...prev,
+      stations: prev.stations.map(s => {
+        if (s.stationId === stationId) {
+          return {
+            ...s,
+            ...(updates.username ? { username: updates.username.trim() } : {}),
+            ...(updates.password ? { password: updates.password } : {}),
+            ...(updates.status ? { status: updates.status } : {})
+          };
+        }
+        return s;
+      })
+    }));
+    return { success: true };
+  };
+
+  const toggleStationStatus = (stationId) => {
+    let newStatus = "ACTIVE";
+    setCredentials(prev => ({
+      ...prev,
+      stations: prev.stations.map(s => {
+        if (s.stationId === stationId) {
+          newStatus = s.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+          return { ...s, status: newStatus };
+        }
+        return s;
+      })
+    }));
+    return newStatus;
+  };
+
+  const resetStationPassword = (stationId, newPassword) => {
+    setCredentials(prev => ({
+      ...prev,
+      stations: prev.stations.map(s => {
+        if (s.stationId === stationId) {
+          return { ...s, password: newPassword };
+        }
+        return s;
+      })
+    }));
+    return true;
+  };
+
+  return (
+    <AuthContext.Provider value={{
+      session,
+      isAuthenticated: session.isAuthenticated,
+      user: session.user,
+      role: session.role,
+      assignedStationId: session.assignedStationId,
+      stationName: session.stationName,
+      stationCredentials: credentials.stations,
+      login,
+      logout,
+      createStationCredential,
+      updateStationCredential,
+      toggleStationStatus,
+      resetStationPassword
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => useContext(AuthContext);

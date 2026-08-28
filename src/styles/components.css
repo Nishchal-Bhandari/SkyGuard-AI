@@ -1,0 +1,462 @@
+/* ==========================================================================
+   MONSOON SENTINEL - TACTICAL COMPONENTS & WIDGETS
+   ========================================================================== */
+
+/* ==========================================================================
+   Tactical Circular Gauges & Progress Meters
+   ========================================================================== */
+
+.gauge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.cyber-gauge-card {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.gauge-container {
+  position: relative;
+  width: 130px;
+  height: 130px;
+  margin: 10px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gauge-svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.gauge-bg-circle {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 8;
+}
+
+.gauge-progress-circle {
+  fill: none;
+  stroke: var(--neon-cyan);
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.8s cubic-bezier(0.16, 1, 0.3, 1), stroke 0.3s ease;
+  filter: drop-shadow(0 0 6px var(--neon-cyan));
+}
+
+.gauge-progress-circle.gauge-green { stroke: var(--neon-green); filter: drop-shadow(0 0 6px var(--neon-green)); }
+.gauge-progress-circle.gauge-amber { stroke: var(--neon-amber); filter: drop-shadow(0 0 6px var(--neon-amber)); }
+.gauge-progress-circle.gauge-crimson { stroke: var(--neon-crimson); filter: drop-shadow(0 0 6px var(--neon-crimson)); }
+
+.gauge-center-value {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.gauge-number {
+  font-family: var(--font-mono);
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.gauge-unit {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 4px;
+}
+
+.gauge-title {
+  font-family: var(--font-tactical);
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: 0.08em;
+}
+
+.gauge-subtext {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 4px;
+}
+
+/* ==========================================================================
+   Map & Radar Container
+   ========================================================================== */
+
+.tactical-map-container {
+  height: 480px;
+  width: 100%;
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+  background: #060913;
+  border: 1px solid var(--border-medium);
+}
+
+#tactical-map {
+  height: 100%;
+  width: 100%;
+  background: #070b16;
+}
+
+.map-overlay-hud {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.map-overlay-card {
+  background: rgba(10, 15, 29, 0.9);
+  border: 1px solid var(--border-medium);
+  backdrop-filter: blur(8px);
+  padding: 10px 14px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.map-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.map-legend-item:last-child {
+  margin-bottom: 0;
+}
+
+/* Custom Marker Styling for Leaflet */
+.custom-station-pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pin-ring {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--neon-cyan);
+  background: rgba(0, 240, 255, 0.25);
+  box-shadow: 0 0 14px var(--neon-cyan);
+  position: relative;
+  animation: pulse-ring 2.5s infinite;
+}
+
+.pin-ring.suspect {
+  border-color: var(--neon-amber);
+  background: rgba(255, 170, 0, 0.25);
+  box-shadow: 0 0 14px var(--neon-amber);
+}
+
+.pin-ring.critical {
+  border-color: var(--neon-crimson);
+  background: rgba(255, 0, 85, 0.35);
+  box-shadow: 0 0 16px var(--neon-crimson);
+  animation: pulse-ring 1s infinite;
+}
+
+.pin-center {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.9); opacity: 0.9; }
+  50% { transform: scale(1.15); opacity: 0.6; }
+  100% { transform: scale(0.9); opacity: 0.9; }
+}
+
+/* ==========================================================================
+   Fault Simulator & Testing Lab Controls
+   ========================================================================== */
+
+.sim-control-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.sim-box {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--border-subtle);
+  padding: 16px;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sim-box-title {
+  font-family: var(--font-tactical);
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--neon-cyan);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sim-slider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sim-slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.74rem;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.cyber-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  outline: none;
+}
+
+.cyber-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--neon-cyan);
+  cursor: pointer;
+  box-shadow: 0 0 8px var(--neon-cyan);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+}
+
+/* ==========================================================================
+   Maintenance Checklist & Audit Trail
+   ========================================================================== */
+
+.checklist-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.checklist-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  background: rgba(10, 15, 29, 0.6);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.checklist-item:hover {
+  background: rgba(0, 240, 255, 0.05);
+  border-color: var(--border-medium);
+}
+
+.checklist-checkbox {
+  margin-top: 3px;
+  accent-color: var(--neon-cyan);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.checklist-content {
+  flex: 1;
+}
+
+.checklist-title {
+  font-family: var(--font-tactical);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checklist-desc {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+/* ==========================================================================
+   Modals & Evidence Overlays
+   ========================================================================== */
+
+.cyber-modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(4, 7, 15, 0.85);
+  backdrop-filter: blur(8px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 20px;
+}
+
+.cyber-modal-overlay.active {
+  display: flex;
+}
+
+.cyber-modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--neon-cyan);
+  box-shadow: 0 0 30px var(--neon-cyan-glow);
+  width: 100%;
+  max-width: 680px;
+  max-height: 90vh;
+  overflow-y: auto;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  animation: modal-appear 0.25s ease-out;
+}
+
+@keyframes modal-appear {
+  from { opacity: 0; transform: scale(0.95) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(90deg, rgba(0, 240, 255, 0.1), transparent);
+}
+
+.modal-title {
+  font-family: var(--font-tactical);
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--neon-cyan);
+  letter-spacing: 0.1em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+.modal-close-btn:hover {
+  color: var(--neon-crimson);
+}
+
+.modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  background: var(--bg-tertiary);
+}
+
+/* Evidence Graph Box */
+.evidence-chain {
+  background: rgba(5, 8, 17, 0.7);
+  border: 1px solid var(--border-subtle);
+  padding: 14px;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.evidence-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}
+
+.evidence-badge {
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Audio Status Pill */
+.audio-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.audio-toggle-btn.active {
+  color: var(--neon-green);
+  border-color: var(--neon-green);
+  box-shadow: 0 0 10px var(--neon-green-glow);
+}

@@ -1,0 +1,348 @@
+/* ==========================================================================
+   MONSOON SENTINEL - AUTHENTICATION & CREDENTIAL MANAGEMENT STYLES
+   ========================================================================== */
+
+/* Login View Container (Full Viewport Centering) */
+.auth-wrapper {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-primary);
+  background-image: 
+    linear-gradient(rgba(0, 240, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.04) 1px, transparent 1px),
+    radial-gradient(circle at 50% 30%, rgba(0, 240, 255, 0.08), transparent 60%);
+  background-size: 32px 32px, 32px 32px, 100% 100%;
+  z-index: 99999;
+  padding: 20px;
+}
+
+/* Tactical Login Card */
+.auth-card {
+  width: 100%;
+  max-width: 480px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-medium);
+  box-shadow: 0 0 35px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 240, 255, 0.15);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+  clip-path: var(--corner-clip-top-right);
+  animation: auth-card-fade 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes auth-card-fade {
+  from { opacity: 0; transform: scale(0.96) translateY(12px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.auth-card.role-admin {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 35px rgba(0, 0, 0, 0.8), 0 0 25px var(--neon-cyan-glow);
+}
+
+.auth-card.role-station {
+  border-color: var(--neon-amber);
+  box-shadow: 0 0 35px rgba(0, 0, 0, 0.8), 0 0 25px var(--neon-amber-glow);
+}
+
+/* Card Header */
+.auth-header {
+  padding: 24px 24px 18px;
+  text-align: center;
+  border-bottom: 1px solid var(--border-subtle);
+  background: linear-gradient(180deg, rgba(0, 240, 255, 0.08), transparent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-brand-icon {
+  width: 46px;
+  height: 46px;
+  background: rgba(0, 240, 255, 0.12);
+  border: 1px solid var(--neon-cyan);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--neon-cyan);
+  font-size: 1.3rem;
+  box-shadow: 0 0 16px var(--neon-cyan-glow);
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+}
+
+.auth-title {
+  font-family: var(--font-tactical);
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: 0.12em;
+}
+
+.auth-subtitle {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+}
+
+/* Role Selector Segmented Switcher */
+.auth-role-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 4px;
+  background: rgba(5, 8, 17, 0.85);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  margin: 18px 24px 0;
+  gap: 4px;
+}
+
+.role-tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  padding: 10px 12px;
+  font-family: var(--font-tactical);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.role-tab-btn:hover {
+  color: var(--text-primary);
+}
+
+.role-tab-btn.active.tab-admin {
+  background: rgba(0, 240, 255, 0.15);
+  color: var(--neon-cyan);
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 12px var(--neon-cyan-glow);
+}
+
+.role-tab-btn.active.tab-station {
+  background: rgba(255, 170, 0, 0.15);
+  color: var(--neon-amber);
+  border-color: var(--neon-amber);
+  box-shadow: 0 0 12px var(--neon-amber-glow);
+}
+
+/* Login Body & Form */
+.auth-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auth-role-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-tactical);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 6px 12px;
+  border-radius: 3px;
+  background: rgba(0, 240, 255, 0.06);
+  border-left: 3px solid var(--neon-cyan);
+}
+
+.auth-role-indicator.indicator-station {
+  background: rgba(255, 170, 0, 0.06);
+  border-left-color: var(--neon-amber);
+  color: var(--neon-amber);
+}
+
+/* Form Groups */
+.cyber-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+}
+
+.cyber-input-label {
+  font-family: var(--font-tactical);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cyber-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.cyber-input-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  pointer-events: none;
+  transition: color 0.2s;
+}
+
+.cyber-input {
+  width: 100%;
+  background: rgba(5, 8, 17, 0.8);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 10px 40px 10px 36px;
+  border-radius: 3px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.cyber-input:focus {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 12px var(--neon-cyan-glow);
+  background: rgba(10, 15, 29, 0.95);
+}
+
+.cyber-input:focus ~ .cyber-input-icon {
+  color: var(--neon-cyan);
+}
+
+/* Password reveal toggle button */
+.password-toggle-btn {
+  position: absolute;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+}
+
+.password-toggle-btn:hover {
+  color: var(--neon-cyan);
+}
+
+/* Error Banner */
+.auth-error-banner {
+  background: rgba(255, 0, 85, 0.12);
+  border: 1px solid var(--neon-crimson);
+  color: #ff4d79;
+  padding: 10px 14px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  display: none;
+  align-items: flex-start;
+  gap: 10px;
+  box-shadow: 0 0 12px rgba(255, 0, 85, 0.25);
+  animation: shake 0.3s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+.auth-error-banner.visible {
+  display: flex;
+}
+
+@keyframes shake {
+  10%, 90% { transform: translate3d(-1px, 0, 0); }
+  20%, 80% { transform: translate3d(2px, 0, 0); }
+  30%, 50%, 70% { transform: translate3d(-3px, 0, 0); }
+  40%, 60% { transform: translate3d(3px, 0, 0); }
+}
+
+/* Submit Button */
+.auth-submit-btn {
+  width: 100%;
+  padding: 12px;
+  font-size: 0.85rem;
+  margin-top: 4px;
+}
+
+/* Demo Credentials Quick-Select Pill Helper */
+.demo-helper-box {
+  background: rgba(5, 8, 17, 0.6);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.demo-helper-title {
+  font-family: var(--font-tactical);
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.demo-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.demo-pill {
+  background: rgba(0, 240, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.demo-pill:hover {
+  background: rgba(0, 240, 255, 0.15);
+  color: var(--neon-cyan);
+  border-color: var(--neon-cyan);
+}
+
+/* ==========================================================================
+   Station Credential Management View & Modal Styles
+   ========================================================================== */
+
+.credential-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.masked-password {
+  font-family: var(--font-mono);
+  letter-spacing: 2px;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.cred-table td {
+  vertical-align: middle;
+}
