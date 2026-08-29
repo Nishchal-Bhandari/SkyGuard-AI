@@ -7,3 +7,5 @@ __pycache__/
 *.pyc
 ml/test_models/
 ml/models/
+backend/data/*.db-wal
+backend/data/*.db-shm
