@@ -107,6 +107,12 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_stations_status ON stations(status);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_admins_username ON admins(username);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_models_station_id ON models(station_id);")
+
+        # Ensure access_key column exists in stations table for admin reveal
+        try:
+            cursor.execute("ALTER TABLE stations ADD COLUMN access_key TEXT DEFAULT 'sentinel2026';")
+        except sqlite3.OperationalError:
+            pass
         
         # Idempotently seed default admin if none exists
         cursor.execute("SELECT id FROM admins WHERE username = ?", (DEFAULT_ADMIN_USERNAME.lower(),))
