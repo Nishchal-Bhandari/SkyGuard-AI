@@ -1,10 +1,16 @@
 import React, { useEffect, useRef } from 'react';
 import { useWeather } from '../../context/WeatherContext';
+import { useAuth } from '../../context/AuthContext';
 import { Chart } from 'chart.js/auto';
 
 export const StationHUD = () => {
   const { stations, activeStationId, history, activeStationModels, setCurrentView, setActiveStationId, neighborRadiusKm, setNeighborRadiusKm } = useWeather();
-  const station = stations.find(s => s.id === activeStationId) || stations[0] || {};
+  const { assignedStationId } = useAuth();
+
+  const station = stations.find(s => s.id?.toUpperCase() === activeStationId?.toUpperCase())
+    || stations.find(s => s.id?.toUpperCase() === assignedStationId?.toUpperCase())
+    || stations[0]
+    || {};
   const activeModel = activeStationModels[activeStationId];
   const mlResult = station.ml_model;
   const spatialData = station.spatial_data;
