@@ -3,8 +3,12 @@ import { useWeather } from '../../context/WeatherContext';
 import { Chart } from 'chart.js/auto';
 
 export const StationHUD = () => {
-  const { stations, activeStationId, history } = useWeather();
+  const { stations, activeStationId, history, activeStationModels, setCurrentView, setActiveStationId, neighborRadiusKm, setNeighborRadiusKm } = useWeather();
   const station = stations.find(s => s.id === activeStationId) || stations[0] || {};
+  const activeModel = activeStationModels[activeStationId];
+  const mlResult = station.ml_model;
+  const spatialData = station.spatial_data;
+  const finalAssessment = station.final_assessment;
 
   const trendCanvasRef = useRef(null);
   const peerCanvasRef = useRef(null);
@@ -188,15 +192,45 @@ export const StationHUD = () => {
 
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(10,15,29,0.7)', padding: '12px 18px', border: '1px solid var(--border-subtle)', borderRadius: '4px', marginBottom: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <span style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.1rem', color: 'var(--neon-cyan)', fontWeight: 'bold' }}>
-            {station.id} - {station.name}
-          </span>
-          <span className={`cyber-badge ${badgeClass}`}>{station.status}</span>
+      {/* Station Profile & Dedicated Model Identity Banner */}
+      <div style={{ background: 'rgba(10,15,29,0.85)', padding: '14px 18px', border: '1px solid var(--border-subtle)', borderRadius: '6px', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.15rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+              {station.id} — {station.name}
+            </span>
+            <span className={`cyber-badge ${badgeClass}`}>{station.status}</span>
+            <span className="cyber-badge badge-offline" style={{ fontSize: '0.68rem' }}>{station.region || "Local Microclimate"}</span>
+          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+            Coordinates: <strong style={{ color: 'var(--text-secondary)' }}>{station.lat?.toFixed(4)}°N, {station.lon?.toFixed(4)}°E</strong> | Elevation: <strong style={{ color: 'var(--text-secondary)' }}>{station.elevation || 500}m</strong>
+          </div>
         </div>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-          Coordinates: {station.lat?.toFixed(4)}°N, {station.lon?.toFixed(4)}°E | Elev: {station.elevation}m
+
+        {/* Station-Adaptive Model Indicator */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'rgba(5,8,17,0.7)', border: '1px solid var(--border-subtle)', padding: '8px 12px', borderRadius: '4px' }}>
+          <div>
+            <div style={{ fontSize: '0.64rem', fontFamily: 'var(--font-tactical)', color: 'var(--text-muted)', letterSpacing: '0.5px' }}>
+              STATION-SPECIFIC MODEL:
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', fontWeight: 'bold', color: activeModel ? 'var(--neon-green)' : 'var(--neon-amber)' }}>
+              {activeModel ? activeModel.modelCard.model_id : "NO TRAINED MODEL (RULES ONLY)"}
+            </div>
+            {mlResult && mlResult.has_model && (
+              <div style={{ fontSize: '0.68rem', fontFamily: 'var(--font-mono)', color: mlResult.is_anomaly ? 'var(--neon-red)' : 'var(--neon-cyan)', marginTop: '2px' }}>
+                Real-Time Anomaly Score: <strong>{mlResult.anomaly_score}</strong> (Threshold: {mlResult.threshold})
+              </div>
+            )}
+          </div>
+          {!activeModel ? (
+            <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('station-upload')} style={{ fontSize: '0.68rem', padding: '4px 8px' }}>
+              <i className="fa-solid fa-brain"></i> Train Model
+            </button>
+          ) : (
+            <span className={`cyber-badge ${mlResult?.is_anomaly ? 'badge-critical' : 'badge-normal'}`} style={{ fontSize: '0.68rem' }}>
+              {mlResult?.is_anomaly ? "ML ANOMALY" : "ML NOMINAL"}
+            </span>
+          )}
         </div>
       </div>
 
@@ -305,6 +339,165 @@ export const StationHUD = () => {
           <div style={{ flex: 1, position: 'relative' }}>
             <canvas ref={peerCanvasRef} id="peer-comparison-chart"></canvas>
           </div>
+        </div>
+      </div>
+
+      {/* Nearby Station Spatial Intelligence & Neighborhood Consensus Panel */}
+      <div className="cyber-card" style={{ marginTop: '16px' }}>
+        <div className="cyber-card-header" style={{ flexWrap: 'wrap', gap: '10px' }}>
+          <div className="cyber-card-title">
+            <i className="fa-solid fa-satellite-dish text-cyan"></i> NEARBY STATION SPATIAL INTELLIGENCE & NEIGHBORHOOD RADAR
+          </div>
+
+          {/* Configurable Search Radius Control */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+              SEARCH RADIUS: <strong style={{ color: 'var(--neon-cyan)' }}>{neighborRadiusKm} km</strong>
+            </span>
+            <input
+              type="range"
+              min="10"
+              max="200"
+              step="5"
+              value={neighborRadiusKm}
+              onChange={(e) => setNeighborRadiusKm(Number(e.target.value))}
+              style={{ cursor: 'pointer', accentColor: 'var(--neon-cyan)' }}
+            />
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {[15, 50, 100].map(r => (
+                <button
+                  key={r}
+                  className={`cyber-btn btn-sm ${neighborRadiusKm === r ? 'btn-primary' : ''}`}
+                  style={{ fontSize: '0.65rem', padding: '2px 6px' }}
+                  onClick={() => setNeighborRadiusKm(r)}
+                >
+                  {r}km
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="cyber-card-body">
+          {/* Dual-Track Anomaly Fusion Summary Banner */}
+          <div style={{ background: 'rgba(5,8,17,0.75)', border: '1px solid var(--border-subtle)', borderRadius: '6px', padding: '14px', marginBottom: '14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '10px', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '0.72rem', fontFamily: 'var(--font-tactical)', color: 'var(--text-muted)' }}>
+                  ANOMALY FUSION CLASSIFICATION:
+                </span>
+                <span className={`cyber-badge ${finalAssessment?.badge_class || 'badge-normal'}`} style={{ fontSize: '0.82rem', padding: '4px 10px', letterSpacing: '0.5px' }}>
+                  {finalAssessment?.classification || 'NORMAL'}
+                </span>
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                CONFIDENCE: <strong style={{ color: 'var(--text-secondary)' }}>{finalAssessment?.confidence || 'HIGH'}</strong>
+              </div>
+            </div>
+
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
+              <i className="fa-solid fa-circle-info text-cyan" style={{ marginRight: '6px' }}></i>
+              {finalAssessment?.interpretation || 'Awaiting real-time spatial evaluation...'}
+            </p>
+
+            {/* Quick Metrics Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginTop: '12px' }}>
+              <div style={{ background: 'rgba(10,15,29,0.6)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>ELIGIBLE PEERS IN RADIUS</div>
+                <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.05rem', color: 'var(--neon-cyan)', fontWeight: 'bold' }}>
+                  {spatialData?.nearby_stations?.length ?? 0} <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>/ {stations.length - 1} fleet</span>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(10,15,29,0.6)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>TARGET VS PEER MEDIAN TEMP</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', color: 'var(--text-primary)', fontWeight: 'bold' }}>
+                  {temp}°C <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>vs {spatialData?.spatial_analysis?.neighborhood_median_temp ?? '--'}°C</span>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(10,15,29,0.6)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>SPATIAL DEVIATION SCORE</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', color: (spatialData?.spatial_analysis?.spatial_deviation_score || 0) > 0.5 ? 'var(--neon-crimson)' : 'var(--neon-green)', fontWeight: 'bold' }}>
+                  {spatialData?.spatial_analysis?.spatial_deviation_score ?? 0.0} <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>({spatialData?.spatial_analysis?.spatially_consistent ? 'Consistent' : 'Outlier'})</span>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(10,15,29,0.6)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>LOCAL ML ANOMALY SCORE</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', color: mlResult?.is_anomaly ? 'var(--neon-crimson)' : 'var(--neon-green)', fontWeight: 'bold' }}>
+                  {mlResult?.anomaly_score ?? 0.0} <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>({mlResult?.is_anomaly ? 'Anomaly' : 'Nominal'})</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Table of Discovered Nearby Stations */}
+          <div style={{ fontSize: '0.72rem', fontFamily: 'var(--font-tactical)', color: 'var(--text-muted)', marginBottom: '8px' }}>
+            <i className="fa-solid fa-list-check"></i> DISCOVERED PEERS WITHIN {neighborRadiusKm} KM (HAVERSINE GEODESIC):
+          </div>
+
+          {(!spatialData?.nearby_stations || spatialData.nearby_stations.length === 0) ? (
+            <div style={{ padding: '20px', textAlign: 'center', background: 'rgba(10,15,29,0.5)', border: '1px dashed var(--border-medium)', borderRadius: '4px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              <i className="fa-solid fa-compass" style={{ fontSize: '1.5rem', marginBottom: '8px', color: 'var(--text-muted)' }}></i>
+              <div>No other weather stations found within {neighborRadiusKm} km of {station.name}.</div>
+              <div style={{ fontSize: '0.68rem', marginTop: '4px' }}>Increase the search radius slider above to expand neighborhood coverage. Local ML continues to operate independently.</div>
+            </div>
+          ) : (
+            <div className="tactical-table-wrapper">
+              <table className="tactical-table">
+                <thead>
+                  <tr>
+                    <th>PEER ID</th>
+                    <th>STATION NAME & REGION</th>
+                    <th>GEODETIC DISTANCE</th>
+                    <th>ELEVATION DELTA</th>
+                    <th>CURRENT TEMP</th>
+                    <th>HUMIDITY</th>
+                    <th>PEER STATUS</th>
+                    <th>ACTION</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {spatialData.nearby_stations.map(peer => {
+                    const elevDelta = (peer.elevation || 0) - (station.elevation || 0);
+                    return (
+                      <tr key={peer.id}>
+                        <td style={{ fontWeight: 'bold', color: 'var(--neon-cyan)' }}>{peer.id}</td>
+                        <td>
+                          {peer.name}
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{peer.region}</div>
+                        </td>
+                        <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 'bold', color: 'var(--neon-green)' }}>
+                          <i className="fa-solid fa-location-arrow" style={{ marginRight: '4px', fontSize: '0.65rem' }}></i>
+                          {peer.distance_km} km
+                        </td>
+                        <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>
+                          {elevDelta >= 0 ? `+${elevDelta}m` : `${elevDelta}m`}
+                        </td>
+                        <td style={{ fontFamily: 'var(--font-mono)' }}>{peer.temp}°C</td>
+                        <td style={{ fontFamily: 'var(--font-mono)' }}>{peer.hum}%</td>
+                        <td>
+                          <span className={`cyber-badge ${peer.status === 'NORMAL' ? 'badge-normal' : 'badge-suspect'}`} style={{ fontSize: '0.65rem' }}>
+                            {peer.status}
+                          </span>
+                        </td>
+                        <td>
+                          <button
+                            className="cyber-btn btn-sm"
+                            style={{ fontSize: '0.65rem', padding: '2px 6px' }}
+                            onClick={() => setActiveStationId(peer.id)}
+                          >
+                            Inspect Peer
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </>

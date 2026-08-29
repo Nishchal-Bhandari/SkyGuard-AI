@@ -60,10 +60,10 @@ backend/
 │   ├── features/                # Temporal & Spatial Feature Engineering
 │   │   ├── temporal.py          # Rolling median, MAD score, 1st/2nd difference
 │   │   └── spatial.py           # Distance-weighted buddy peer consensus & lapse rates
-│   ├── models/                  # Machine Learning Engine
+│   ├── models/                  # Station-Adaptive ML Engine
 │   │   ├── isolation_forest.py  # Model loader, scorer, and feature transformer
 │   │   ├── model_card.py        # Cryptographic metadata & SHA-256 validation
-│   │   └── artifacts/           # Trained .pkl checkpoints & model cards
+│   │   └── artifacts/           # Station-isolated models: {station_id}/model_v1.json / .pkl
 │   ├── fusion/                  # Multi-Signal Evidence Fusion
 │   │   ├── fusion_engine.py     # Weighted score calculator & severe storm coherence gate
 │   │   └── policy.py            # Quality state mapper (ACCEPTED, SUSPECT, EXTREME)
@@ -76,8 +76,11 @@ backend/
 │       │   ├── credentials.py   # Station RBAC provisioning
 │       │   └── export.py        # Cryptographically signed telemetry export
 │       └── websockets.py        # Real-time WebSocket broadcasting (`/ws/telemetry`)
-├── ml/                          # Offline Training & Benchmarking Pipeline
-│   ├── train_pipeline.py        # Isolation Forest training script
+├── ml/                          # Station-Adaptive & Spatial Pipeline
+│   ├── station_adaptive_pipeline.py # Station-specific Isolation Forest pipeline
+│   ├── test_station_isolation.py    # Automated test suite proving Model A != Model B
+│   ├── spatial_engine.py        # Haversine distance, neighborhood filtering, robust MAD
+│   ├── test_spatial_intelligence.py # Automated test suite (8 spatial intelligence scenarios)
 │   ├── fault_generator.py       # Synthetic stress tests (spikes, drift, flatlines)
 │   └── evaluate_metrics.py      # Event Precision, Recall, Delay, Brier score runner
 ├── tests/                       # Pytest test suite

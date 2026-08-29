@@ -188,42 +188,57 @@ Event-context features: multi-variable coherence, nearby-station agreement, rain
 context where legally and technically available, whether a rapid change is consistent with a
 storm or front.
 
-## 8. ML model stack
+## 8. ML model stack — Station-Adaptive Architecture
 
-**MVP — engineered-feature Isolation Forest.** Train one global model per variable family or
-station cluster on windows believed to be normal. Use robust scaling, exclude known-bad
-observations, retain the training manifest and feature version.
+**Zero Pre-Trained Global Models:** The platform initially ships with zero trained models. Rather
+than imposing one universal baseline across diverse microclimates, SkyGuard-AI provides an automated
+pipeline that trains, versions, and deploys a dedicated model per station ID using only that station's
+historical observations.
 
-**Optional — sequence autoencoder/LSTM.** Only for stations with enough clean history; compare
-fairly against rules + Isolation Forest under the same chronological evaluation before adopting.
+**Station-Specific Isolation Forest:** When historical telemetry is uploaded for a station, the shared
+pipeline validates the data, scrubs hardware error codes, builds localized features (temperature lags,
+diurnal solar cycles, dew-point depression), fits an Isolation Forest ensemble (e.g. 50 iTrees), and
+calibrates a dynamic 95th-percentile threshold specific to that station's local climate.
 
-**Edge/online baseline.** Rolling medians, MAD, exponentially-weighted means, a compact
-station-health state. No model download required; stays available offline.
+**Cold-Start & Graceful Degradation:** A station awaiting calibration operates strictly on universal
+deterministic physical rules with zero false alerts. Once calibrated, its model artifact is saved as
+`model_{station_id}_v1.json` with a cryptographic SHA-256 hash and bound to real-time inference.
 
-## 9. Evidence fusion and policy
+## 9. Evidence fusion and spatial policy
+
+SkyGuard-AI employs a dual-track fusion architecture that integrates the station's dedicated
+anomaly model with geodetic neighborhood consensus:
 
 ```text
-rule_score = weighted normalized severity of deterministic failures
-model_score = calibrated percentile of model anomaly score
-spatial_score = peer disagreement adjusted by peer trust
-health_score = station-health risk
-coherence_score = support for genuine-weather event
+Track A: Station-Adaptive ML
+  local_anomaly_score = score from dedicated model AWS-xx_IF_v1
+  is_local_anomaly = local_anomaly_score >= dynamic_threshold
 
-fault_risk = 0.35*rule_score + 0.25*model_score +
-             0.25*spatial_score + 0.15*health_score
+Track B: Nearby Station Spatial Intelligence
+  1. Locate peers where Haversine(target, peer) <= NEIGHBOR_RADIUS_KM (default: 50 km)
+  2. Filter peers where (now - last_seen) <= MAX_AGE_SECONDS (default: 300 s)
+  3. Exclude corrupt/invalid peer readings (-999, out-of-bounds measurements)
+  4. Compute robust neighborhood Median and MAD (Median Absolute Deviation)
+  5. spatial_deviation_score = multi-variable normalized residual
+  6. spatially_consistent = residual_temp <= 3.0°C and spatial_deviation_score < 0.50
 
-if coherence_score >= 0.75 and peer_support >= 2:
-    disposition = GENUINE_EXTREME_CANDIDATE
-elif fault_risk >= 0.80 and persists for 2 observations:
-    disposition = REJECTED or SUSPECT according to rule policy
-elif fault_risk >= 0.55:
-    disposition = SUSPECT
-else:
-    disposition = ACCEPTED
+Dual-Track Anomaly Fusion:
+  if physical_envelope_breached:
+      classification = PHYSICAL_SENSOR_FAILURE
+  elif peer_count == 0:
+      classification = (LOCAL_ANOMALY_UNVERIFIED if is_local_anomaly else NORMAL)
+  elif not is_local_anomaly and spatially_consistent:
+      classification = NORMAL
+  elif is_local_anomaly and (spatially_consistent or peer_anomaly_ratio >= 0.4):
+      classification = REGIONAL_EVENT (severe storm / widespread front)
+  elif is_local_anomaly and not spatially_consistent:
+      classification = LOCALIZED_ANOMALY (likely localized sensor defect)
 ```
 
-These weights are starting policy values, not validated truth — store them in configuration and
-tune on fault-injection/expert-review data.
+Composite fault risk score formula:
+```text
+fault_risk = 0.35*rule_score + 0.25*model_score + 0.25*spatial_score + 0.15*health_score
+```
 
 The incident policy adds persistence windows, hysteresis, deduplication, cooldowns, and
 escalation. A single spike creates an observation flag, not a page. A communication gap on a

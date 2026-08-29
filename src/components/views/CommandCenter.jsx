@@ -2,11 +2,12 @@ import React from 'react';
 import { useWeather } from '../../context/WeatherContext';
 
 export const CommandCenter = () => {
-  const { stations, incidents, setCurrentView, setActiveStationId } = useWeather();
+  const { stations, incidents, setCurrentView, setActiveStationId, activeStationModels } = useWeather();
 
   const normalCount = stations.filter(s => s.status === 'NORMAL').length;
   const suspectCount = stations.filter(s => s.status === 'SUSPECT' || s.status === 'CRITICAL').length;
   const extremeCount = stations.filter(s => s.status === 'EXTREME').length;
+  const calibratedModelCount = Object.keys(activeStationModels).length;
   const openIncidents = incidents.filter(i => i.status === 'open').length;
 
   const handleLaunchHUD = (stationId) => {
@@ -77,17 +78,18 @@ export const CommandCenter = () => {
                   <th>STATION ID</th>
                   <th>LOCATION / REGION</th>
                   <th>STATUS</th>
+                  <th>DEDICATED MODEL</th>
                   <th>TEMPERATURE</th>
                   <th>HUMIDITY</th>
                   <th>PRESSURE</th>
                   <th>RAINFALL</th>
-                  <th>BATTERY / SIGNAL</th>
                   <th>ACTIONS</th>
                 </tr>
               </thead>
               <tbody>
                 {stations.map(st => {
                   const badge = st.status === 'NORMAL' ? 'badge-normal' : st.status === 'SUSPECT' ? 'badge-suspect' : st.status === 'CRITICAL' ? 'badge-critical' : 'badge-extreme';
+                  const model = activeStationModels[st.id]?.modelCard;
                   return (
                     <tr key={st.id}>
                       <td style={{ fontWeight: 'bold', color: 'var(--neon-cyan)' }}>{st.id}</td>
@@ -97,11 +99,21 @@ export const CommandCenter = () => {
                       <td>
                         <span className={`cyber-badge ${badge}`} id={`live-status-${st.id}`}>{st.status}</span>
                       </td>
+                      <td>
+                        {model ? (
+                          <span className="cyber-badge badge-normal" style={{ fontSize: '0.68rem' }}>
+                            {model.model_id}
+                          </span>
+                        ) : (
+                          <span className="cyber-badge badge-offline" style={{ fontSize: '0.68rem' }}>
+                            Rules Only
+                          </span>
+                        )}
+                      </td>
                       <td id={`live-temp-${st.id}`}>{st.sensors.temperature.value} {st.sensors.temperature.unit}</td>
                       <td id={`live-hum-${st.id}`}>{st.sensors.humidity.value} {st.sensors.humidity.unit}</td>
                       <td id={`live-pres-${st.id}`}>{st.sensors.pressure.value} {st.sensors.pressure.unit}</td>
                       <td id={`live-rain-${st.id}`}>{st.sensors.rainfall.value} {st.sensors.rainfall.unit}</td>
-                      <td>{st.battery}V | {st.signal}dBm</td>
                       <td>
                         <button className="cyber-btn btn-sm" onClick={() => handleLaunchHUD(st.id)}>
                           <i className="fa-solid fa-terminal"></i> Operator HUD
