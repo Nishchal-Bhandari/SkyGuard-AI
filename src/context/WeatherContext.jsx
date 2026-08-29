@@ -248,14 +248,7 @@ export const WeatherProvider = ({ children }) => {
             };
           }
 
-          // 2. Spatial Cross-Station Consistency Check
-          const spatialAnalysis = spatialEngine.detectSpatialAnomalies(
-            currentReadingStation,
-            prevStations,
-            stateRef.current.neighborRadiusKm
-          );
-
-          // 3. Physical & Climatological Rules Check
+          // 2. Physical & Climatological Rules Check
           const qcResult = qcEngine.evaluate(
             {
               temperature: { value: temp },
@@ -271,11 +264,23 @@ export const WeatherProvider = ({ children }) => {
             mlResult
           );
 
-          const finalAssessment = spatialEngine.fuseAssessment({
-            physicalQc: qcResult,
-            localMl: mlResult,
-            spatialAnalysis: spatialAnalysis.spatial_analysis
-          });
+          // 3. Spatial Cross-Station Consistency & Fusion
+          let spatialAnalysis = null;
+          let finalAssessment = null;
+          try {
+            if (spatialEngine && typeof spatialEngine.analyzeStation === 'function') {
+              spatialAnalysis = spatialEngine.analyzeStation({
+                targetStation: currentReadingStation,
+                stations: prevStations,
+                radiusKm: stateRef.current.neighborRadiusKm,
+                localMl: mlResult,
+                physicalQc: qcResult
+              });
+              finalAssessment = spatialAnalysis?.final_assessment || null;
+            }
+          } catch (err) {
+            console.warn("[SpatialEngine] Evaluation skipped:", err.message);
+          }
 
           const status = qcResult.quality_state === "SUSPECT" ? (qcResult.fault_risk >= 0.8 ? "CRITICAL" : "SUSPECT")
             : qcResult.quality_state === "GENUINE_EXTREME_CANDIDATE" ? "EXTREME" : "NORMAL";

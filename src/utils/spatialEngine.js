@@ -279,6 +279,10 @@ export class SpatialIntelligenceEngine {
       final_assessment: assessment
     };
   }
+
+  detectSpatialAnomalies(targetStation, stations, radiusKm) {
+    return this.analyzeStation({ targetStation, stations, radiusKm });
+  }
 }
 
 export const spatialEngine = new SpatialIntelligenceEngine();
