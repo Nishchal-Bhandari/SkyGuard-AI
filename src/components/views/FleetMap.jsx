@@ -1,9 +1,12 @@
 import React, { useEffect, useRef } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { useWeather } from '../../context/WeatherContext';
 import { haversineDistance } from '../../utils/spatialEngine';
 import L from 'leaflet';
 
 export const FleetMap = () => {
+  const { role } = useAuth();
+  const isOperator = role === 'station_operator' || role === 'STATION_OPERATOR';
   const { stations, activeStationId, setActiveStationId, setCurrentView, neighborRadiusKm, setNeighborRadiusKm } = useWeather();
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -12,6 +15,23 @@ export const FleetMap = () => {
   const circleRef = useRef(null);
 
   const targetStation = stations.find(s => s.id === activeStationId) || stations[0];
+
+  if (!stations || stations.length === 0) {
+    return (
+      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <i className="fa-solid fa-map-location-dot" style={{ fontSize: '3rem', color: 'var(--neon-cyan)', marginBottom: '16px', opacity: 0.8 }}></i>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+          NO REGISTERED WEATHER STATIONS ON RADAR
+        </div>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
+          All mock stations have been removed. Provision a weather station in Station Credentials to display geographic coordinates and spatial neighborhood vectors.
+        </p>
+        <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
+          <i className="fa-solid fa-key"></i> Provision Weather Station
+        </button>
+      </div>
+    );
+  }
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -97,14 +117,16 @@ export const FleetMap = () => {
       };
       popupDiv.appendChild(selectBtn);
 
-      const inspectBtn = document.createElement('button');
-      inspectBtn.style.cssText = 'background: #3b82f6; color: #fff; border: none; padding: 4px 8px; font-weight: bold; font-size: 10px; cursor: pointer; border-radius: 2px; margin-top: 6px;';
-      inspectBtn.innerText = 'Open HUD';
-      inspectBtn.onclick = () => {
-        setActiveStationId(st.id);
-        setCurrentView('station-hud');
-      };
-      popupDiv.appendChild(inspectBtn);
+      if (isOperator) {
+        const inspectBtn = document.createElement('button');
+        inspectBtn.style.cssText = 'background: #3b82f6; color: #fff; border: none; padding: 4px 8px; font-weight: bold; font-size: 10px; cursor: pointer; border-radius: 2px; margin-top: 6px;';
+        inspectBtn.innerText = 'Open HUD';
+        inspectBtn.onclick = () => {
+          setActiveStationId(st.id);
+          setCurrentView('station-hud');
+        };
+        popupDiv.appendChild(inspectBtn);
+      }
 
       marker.bindPopup(popupDiv);
       markersRef.current[st.id] = marker;
@@ -175,9 +197,11 @@ export const FleetMap = () => {
             onChange={(e) => setNeighborRadiusKm(Number(e.target.value))}
             style={{ cursor: 'pointer', accentColor: 'var(--neon-cyan)', width: '100px' }}
           />
-          <button className="cyber-btn btn-sm" onClick={() => setCurrentView('station-hud')} style={{ fontSize: '0.68rem' }}>
-            <i className="fa-solid fa-terminal"></i> Open {targetStation?.id} HUD
-          </button>
+          {isOperator && (
+            <button className="cyber-btn btn-sm" onClick={() => setCurrentView('station-hud')} style={{ fontSize: '0.68rem' }}>
+              <i className="fa-solid fa-terminal"></i> Open {targetStation?.id} HUD
+            </button>
+          )}
         </div>
       </div>
       <div className="cyber-card-body" style={{ padding: 0 }}>

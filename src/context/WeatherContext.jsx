@@ -51,38 +51,52 @@ export const WeatherProvider = ({ children }) => {
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [activeFaults, setActiveFaults] = useState({}); // stationId -> { type, ticksRemaining, offset }
 
+  const isStationOperator = useCallback((r) => r === 'station_operator' || r === 'STATION_OPERATOR', []);
+  const isCentralAdmin = useCallback((r) => r === 'admin' || r === 'CENTRAL_ADMIN', []);
+
   const [activeStationId, setActiveStationId] = useState(() => {
-    if (role === 'station_operator' && assignedStationId) return assignedStationId;
+    if (isStationOperator(role) && assignedStationId) return assignedStationId;
     return null;
   });
 
   const [currentView, setCurrentView] = useState(() => {
-    if (role === 'station_operator') return 'station-hud';
+    if (isStationOperator(role)) return 'station-hud';
     return 'command-center';
   });
 
   // Sync role/station view when session changes
   useEffect(() => {
-    if (role === 'station_operator') {
+    if (isStationOperator(role)) {
       if (assignedStationId) setActiveStationId(assignedStationId);
-      const adminOnlyViews = ['command-center', 'fleet-map', 'incidents', 'qc-rules', 'fault-lab', 'model-governance', 'credentials', 'export'];
+      const adminOnlyViews = ['command-center', 'credentials', 'qc-rules', 'export'];
       if (adminOnlyViews.includes(currentView)) {
         setCurrentView('station-hud');
       }
-    } else if (role === 'admin') {
-      const stationOnlyViews = ['station-hud', 'station-upload', 'station-diagnostics', 'station-checklist', 'edge-sync'];
-      if (stationOnlyViews.includes(currentView)) {
+    } else if (isCentralAdmin(role)) {
+      const operatorOnlyViews = ['station-hud', 'station-diagnostics', 'station-checklist', 'edge-sync'];
+      if (operatorOnlyViews.includes(currentView)) {
         setCurrentView('command-center');
       }
     }
-  }, [role, assignedStationId]);
+  }, [role, assignedStationId, currentView, isStationOperator, isCentralAdmin]);
 
-  // Automatically select first station if none selected
+  // Restrict activeStationId switching for Station Operator
+  const handleSetActiveStationId = useCallback((id) => {
+    if (isStationOperator(role) && assignedStationId && id !== assignedStationId) {
+      console.warn(`ACCESS DENIED: Station Operator for ${assignedStationId} cannot switch active station to ${id}`);
+      return;
+    }
+    setActiveStationId(id);
+  }, [role, assignedStationId, isStationOperator]);
+
+  // Automatically select first station if none selected (for admin) or assigned station (for operator)
   useEffect(() => {
-    if (!activeStationId && stations.length > 0) {
+    if (isStationOperator(role) && assignedStationId) {
+      setActiveStationId(assignedStationId);
+    } else if (!activeStationId && stations.length > 0) {
       setActiveStationId(stations[0].id);
     }
-  }, [stations, activeStationId]);
+  }, [stations, activeStationId, role, assignedStationId, isStationOperator]);
 
   // Telemetry History state (Map<stationId, Array<Obs>>)
   const [history, setHistory] = useState(() => {
@@ -313,6 +327,9 @@ export const WeatherProvider = ({ children }) => {
    * One-Click Instant Load of Real Indian AWS Fleet (8 Major Microclimates)
    */
   const loadPresetFleet = async () => {
+    if (!OPEN_METEO_PRESET_STATIONS || OPEN_METEO_PRESET_STATIONS.length === 0) {
+      return;
+    }
     const formatted = OPEN_METEO_PRESET_STATIONS.map(p => ({
       id: p.id,
       name: p.name,
@@ -574,6 +591,11 @@ export const WeatherProvider = ({ children }) => {
   }, [isLiveApiMode, stations.length, syncLiveOpenMeteoData]);
 
   const injectFault = (stationId, faultType) => {
+    if (isStationOperator(role) && assignedStationId && stationId !== assignedStationId) {
+      tacticalAudio.playAlarm();
+      alert(`ACCESS DENIED: Station Operator for '${assignedStationId}' cannot inject faults into '${stationId}'.`);
+      return;
+    }
     setActiveFaults(prev => ({
       ...prev,
       [stationId]: {
@@ -586,6 +608,14 @@ export const WeatherProvider = ({ children }) => {
   };
 
   const clearFaults = (stationId = null) => {
+    if (isStationOperator(role) && assignedStationId) {
+      setActiveFaults(prev => {
+        const next = { ...prev };
+        delete next[assignedStationId];
+        return next;
+      });
+      return;
+    }
     if (stationId) {
       setActiveFaults(prev => {
         const next = { ...prev };
@@ -631,26 +661,25 @@ export const WeatherProvider = ({ children }) => {
           actionDesc = "Flagged Invalid / Sensor Defect";
         }
 
+        tacticalAudio.playClick();
         return {
           ...inc,
           quality_state: updatedQuality,
           status: updatedStatus,
-          disposition_history: [
-            ...inc.disposition_history,
-            { operator, action: actionDesc, timestamp: new Date().toISOString() }
-          ]
+          adjudicated_by: operator,
+          adjudicated_at: new Date().toISOString(),
+          decision_log: [...(inc.decision_log || []), `${new Date().toLocaleTimeString()} - ${operator}: ${actionDesc}`]
         };
       }
       return inc;
     }));
-    tacticalAudio.playSuccess();
   };
 
-  const updateChecklist = (stationId, itemId, done) => {
+  const updateChecklist = (stationId, taskId, done) => {
     setChecklists(prev => ({
       ...prev,
       [stationId]: (prev[stationId] || []).map(item => {
-        if (item.id === itemId) {
+        if (item.id === taskId) {
           return {
             ...item,
             done,
@@ -664,6 +693,42 @@ export const WeatherProvider = ({ children }) => {
   };
 
   const trainStationModel = async (stationId, rawDataset, version = "v1.0") => {
+    // RBAC Rule 1: Central Admin is strictly prohibited from training station models
+    if (!isStationOperator(role)) {
+      tacticalAudio.playAlarm();
+      return {
+        success: false,
+        error: "ACCESS DENIED: Central Admin cannot train station models. Station-specific model training is restricted to the authorized Station Operator."
+      };
+    }
+
+    // RBAC Rule 2: Station Operator can ONLY train their assigned station
+    if (assignedStationId !== stationId) {
+      tacticalAudio.playAlarm();
+      return {
+        success: false,
+        error: `ACCESS DENIED: Station Operator for '${assignedStationId}' is not authorized to train model for '${stationId}'. Cross-station training is strictly prohibited.`
+      };
+    }
+
+    // Training Data Rule 3: Training dataset must exist and originate from uploaded CSV/JSON
+    if (!rawDataset || !Array.isArray(rawDataset) || rawDataset.length === 0) {
+      tacticalAudio.playAlarm();
+      return {
+        success: false,
+        error: "VALIDATION ERROR: Training requires a user-uploaded CSV or JSON dataset. Open-Meteo observations cannot be used for training."
+      };
+    }
+
+    // Training Data Rule 4: Minimum observation records threshold
+    if (rawDataset.length < 20) {
+      tacticalAudio.playAlarm();
+      return {
+        success: false,
+        error: `VALIDATION ERROR: Insufficient historical records in uploaded file for ${stationId}. Found ${rawDataset.length} rows; minimum 20 required.`
+      };
+    }
+
     const stationProfile = stations.find(s => s.id === stationId) || { id: stationId, name: stationId };
     try {
       const result = await mlPipeline.trainStationModel({
@@ -709,6 +774,12 @@ export const WeatherProvider = ({ children }) => {
   };
 
   const rollbackModel = (stationId, targetModelId = null) => {
+    if (!isCentralAdmin(role)) {
+      tacticalAudio.playAlarm();
+      alert("ACCESS DENIED: Model rollback is a governance action restricted to Central Admin.");
+      return { success: false, error: "ACCESS_DENIED: Model rollback is restricted to Central Admin." };
+    }
+
     const historyList = stationModels[stationId] || [];
     if (historyList.length > 1) {
       const fallback = historyList[1];
@@ -730,6 +801,11 @@ export const WeatherProvider = ({ children }) => {
   };
 
   const registerStation = (newStationData) => {
+    if (!isCentralAdmin(role)) {
+      console.warn("ACCESS DENIED: Station provisioning is restricted to Central Admin.");
+      return { success: false, error: "ACCESS_DENIED: Only Central Admin can provision stations." };
+    }
+
     setStations(prev => {
       const existing = prev.find(s => s.id === newStationData.id);
       if (existing) return prev;
@@ -782,7 +858,7 @@ export const WeatherProvider = ({ children }) => {
       incidents,
       history,
       activeStationId,
-      setActiveStationId,
+      setActiveStationId: handleSetActiveStationId,
       currentView,
       setCurrentView: (view) => {
         setCurrentView(view);

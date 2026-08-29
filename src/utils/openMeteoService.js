@@ -5,89 +5,9 @@
  * Documentation: https://open-meteo.com/en/docs
  */
 
-// Curated Real-World Automatic Weather Stations across diverse Indian Microclimates
-export const OPEN_METEO_PRESET_STATIONS = [
-  {
-    id: "AWS-07",
-    name: "Hyderabad Deccan Plateau",
-    region: "Deccan Semi-Arid",
-    lat: 17.3850,
-    lon: 78.4867,
-    elevation: 542,
-    username: "operator_hyd",
-    status: "ACTIVE"
-  },
-  {
-    id: "AWS-12",
-    name: "Mumbai Coastal Radar",
-    region: "West Coast Maritime",
-    lat: 18.9220,
-    lon: 72.8346,
-    elevation: 14,
-    username: "operator_mum",
-    status: "ACTIVE"
-  },
-  {
-    id: "AWS-19",
-    name: "Cherrapunji Hill Observatory",
-    region: "Meghalaya Rainforest",
-    lat: 25.2702,
-    lon: 91.7323,
-    elevation: 1313,
-    username: "operator_cherra",
-    status: "ACTIVE"
-  },
-  {
-    id: "AWS-01",
-    name: "Delhi Urban Meteorological Base",
-    region: "Northern Plains",
-    lat: 28.6139,
-    lon: 77.2090,
-    elevation: 216,
-    username: "operator_del",
-    status: "ACTIVE"
-  },
-  {
-    id: "AWS-04",
-    name: "Bengaluru Tech Plateau",
-    region: "South Mysore Plateau",
-    lat: 12.9716,
-    lon: 77.5946,
-    elevation: 920,
-    username: "operator_blr",
-    status: "ACTIVE"
-  },
-  {
-    id: "AWS-21",
-    name: "Leh High-Altitude Base",
-    region: "Trans-Himalayan Cold Desert",
-    lat: 34.1526,
-    lon: 77.5771,
-    elevation: 3500,
-    username: "operator_leh",
-    status: "ACTIVE"
-  },
-  {
-    id: "AWS-15",
-    name: "Pune Western Ghats Inflow",
-    region: "Ghats Foothills",
-    lat: 18.5204,
-    lon: 73.8567,
-    elevation: 560,
-    username: "operator_pune",
-    status: "ACTIVE"
-  },
-  {
-    id: "AWS-09",
-    name: "Kolkata Delta Marine",
-    region: "Sundarbans Delta",
-    lat: 22.5726,
-    lon: 88.3639,
-    elevation: 9,
-    username: "operator_kol",
-    status: "ACTIVE"
-  }
-];
+// Clean slate: Zero preset stations (All existing mock/preset station data removed)
+export const OPEN_METEO_PRESET_STATIONS = [];
+
 
 class OpenMeteoService {
   constructor() {

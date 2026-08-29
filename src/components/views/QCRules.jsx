@@ -1,9 +1,26 @@
 import React from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { useWeather } from '../../context/WeatherContext';
 import { tacticalAudio } from '../../utils/audio';
 
 export const QCRules = () => {
+  const { role } = useAuth();
   const { qcConfig, setQcConfig } = useWeather();
+  const isAdmin = role === 'admin' || role === 'CENTRAL_ADMIN';
+
+  if (!isAdmin) {
+    return (
+      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <i className="fa-solid fa-lock" style={{ fontSize: '3rem', color: 'var(--neon-crimson)', marginBottom: '16px', opacity: 0.8 }}></i>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-crimson)', fontWeight: 800 }}>
+          ACCESS DENIED — CENTRAL ADMIN PRIVILEGES REQUIRED
+        </div>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
+          Physical QC calibration thresholds can only be configured by Central Administration.
+        </p>
+      </div>
+    );
+  }
 
   const handleSliderChange = (key, value) => {
     setQcConfig(prev => ({

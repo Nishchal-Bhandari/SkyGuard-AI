@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { useWeather } from '../../context/WeatherContext';
-import { BENCHMARK_HISTORICAL_DATA } from '../../utils/seedData';
 import { tacticalAudio } from '../../utils/audio';
 
 export const StationUpload = () => {
+  const { role, assignedStationId } = useAuth();
   const {
     activeStationId,
     stations,
@@ -14,13 +15,18 @@ export const StationUpload = () => {
     fetchHistoricalTrainingDataset
   } = useWeather();
 
+  const isOperator = role === 'station_operator' || role === 'STATION_OPERATOR';
+  const isAdmin = role === 'admin' || role === 'CENTRAL_ADMIN';
+  const isAuthorizedForStation = isOperator && assignedStationId === activeStationId;
+
   const currentStation = stations.find(s => s.id === activeStationId) || stations[0] || {};
   const activeModel = activeStationModels[activeStationId];
 
-  // Default dataset initialized from benchmark or custom rows
-  const [datasetRows, setDatasetRows] = useState(() => {
-    return BENCHMARK_HISTORICAL_DATA[activeStationId] || BENCHMARK_HISTORICAL_DATA["AWS-07"] || [];
-  });
+  // Dataset states: separate user-uploaded training data from Open-Meteo observation history
+  const [uploadedDataset, setUploadedDataset] = useState([]);
+  const [uploadedFileName, setUploadedFileName] = useState('');
+  const [openMeteoHistory, setOpenMeteoHistory] = useState([]);
+  const [activeTableSource, setActiveTableSource] = useState('none'); // 'uploaded' | 'openmeteo' | 'none'
 
   const [pipelineState, setPipelineState] = useState('IDLE'); // IDLE, TRAINING, COMPLETED, ERROR
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -37,16 +43,11 @@ export const StationUpload = () => {
           NO REGISTERED WEATHER STATIONS
         </div>
         <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
-          To train an Isolation Forest model, please load the preset Indian AWS fleet or provision a weather station first via Station Credentials.
+          All mock stations and data have been removed. To train an Isolation Forest model, please provision a weather station first via Station Credentials.
         </p>
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
-          <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('command-center')}>
-            <i className="fa-solid fa-tower-observation"></i> Open Fleet Command
-          </button>
-          <button className="cyber-btn btn-sm" onClick={() => setCurrentView('credentials')}>
-            <i className="fa-solid fa-key"></i> Provision Weather Station
-          </button>
-        </div>
+        <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
+          <i className="fa-solid fa-key"></i> Provision Weather Station
+        </button>
       </div>
     );
   }
@@ -62,25 +63,25 @@ export const StationUpload = () => {
   ];
 
   const handleStationChange = (id) => {
+    if (isOperator && assignedStationId && id !== assignedStationId) {
+      setErrorMessage(`ACCESS DENIED: Station Operator for '${assignedStationId}' cannot switch to '${id}'.`);
+      tacticalAudio.playAlarm();
+      return;
+    }
     setActiveStationId(id);
-    setDatasetRows(BENCHMARK_HISTORICAL_DATA[id] || BENCHMARK_HISTORICAL_DATA["AWS-07"] || []);
+    setUploadedDataset([]);
+    setUploadedFileName('');
+    setOpenMeteoHistory([]);
+    setActiveTableSource('none');
     setPipelineState('IDLE');
     setTrainedResult(null);
+    setErrorMessage('');
     setApiFeedback('');
     tacticalAudio.playClick();
   };
 
-  const handleLoadBenchmark = () => {
-    const data = BENCHMARK_HISTORICAL_DATA[activeStationId] || BENCHMARK_HISTORICAL_DATA["AWS-07"] || [];
-    setDatasetRows([...data]);
-    setPipelineState('IDLE');
-    setTrainedResult(null);
-    setApiFeedback('');
-    tacticalAudio.playSuccess();
-  };
-
   /**
-   * Fetch 7-Day Real Hourly Historical Climatology from Open-Meteo API
+   * Fetch 7-Day Real Hourly Historical Climatology from Open-Meteo API (Observation Only)
    */
   const handleFetchOpenMeteoHistory = async (pastDays = 7) => {
     const lat = currentStation.lat !== undefined ? currentStation.lat : 17.3850;
@@ -92,10 +93,9 @@ export const StationUpload = () => {
 
     try {
       const res = await fetchHistoricalTrainingDataset(lat, lon, pastDays);
-      setDatasetRows(res.rows);
-      setApiFeedback(`Successfully ingested ${res.totalRows} real hourly observations from Open-Meteo API (${pastDays} days history). Ready to train.`);
-      setPipelineState('IDLE');
-      setTrainedResult(null);
+      setOpenMeteoHistory(res.rows);
+      setActiveTableSource('openmeteo');
+      setApiFeedback(`Successfully ingested ${res.totalRows} real hourly observations from Open-Meteo API (${pastDays} days history). Displayed for reference only (Not used for training).`);
       tacticalAudio.playSuccess();
     } catch (err) {
       setApiFeedback(`Failed to fetch from Open-Meteo: ${err.message}`);
@@ -106,6 +106,20 @@ export const StationUpload = () => {
   };
 
   const handleFileUpload = (e) => {
+    // RBAC Check 1: Central Admin cannot upload station training datasets
+    if (!isOperator) {
+      setErrorMessage("ACCESS DENIED: Central Admin cannot upload station training datasets. Only the authorized Station Operator may upload training data.");
+      tacticalAudio.playAlarm();
+      return;
+    }
+
+    // RBAC Check 2: Station Operator can only upload for their assigned station
+    if (assignedStationId !== activeStationId) {
+      setErrorMessage(`ACCESS DENIED: Station Operator for '${assignedStationId}' cannot upload training datasets for '${activeStationId}'.`);
+      tacticalAudio.playAlarm();
+      return;
+    }
+
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -115,17 +129,16 @@ export const StationUpload = () => {
         const text = event.target?.result;
         if (typeof text !== 'string') return;
 
+        let parsedRows = [];
         if (file.name.endsWith('.json')) {
           const parsed = JSON.parse(text);
-          const rows = Array.isArray(parsed) ? parsed : (parsed.data || [parsed]);
-          setDatasetRows(rows);
+          parsedRows = Array.isArray(parsed) ? parsed : (parsed.data || [parsed]);
         } else {
           // CSV Parser
           const lines = text.trim().split('\n');
           if (lines.length < 2) throw new Error("CSV file must have a header and at least 1 data row.");
           const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
           
-          const parsedRows = [];
           for (let i = 1; i < lines.length; i++) {
             const cols = lines[i].split(',').map(c => c.trim());
             if (cols.length < 3) continue;
@@ -144,13 +157,15 @@ export const StationUpload = () => {
               rain: parseFloat(rowObj.rainfall_mm ?? rowObj.rain ?? 0)
             });
           }
-          setDatasetRows(parsedRows);
         }
 
+        setUploadedDataset(parsedRows);
+        setUploadedFileName(file.name);
+        setActiveTableSource('uploaded');
         tacticalAudio.playSuccess();
         setPipelineState('IDLE');
         setTrainedResult(null);
-        setApiFeedback('');
+        setErrorMessage('');
       } catch (err) {
         alert(`Error parsing file: ${err.message}`);
         tacticalAudio.playAlarm();
@@ -171,8 +186,32 @@ export const StationUpload = () => {
   };
 
   const runTrainingPipeline = async () => {
-    if (datasetRows.length < 20) {
-      setErrorMessage(`Insufficient historical records for ${activeStationId}. Found ${datasetRows.length} rows; minimum 20 required.`);
+    // RBAC Rule 1: Central Admin is strictly prohibited from training station models
+    if (!isOperator) {
+      setErrorMessage("ACCESS DENIED: Central Admin cannot train station models. Station-specific model training is restricted to the authorized Station Operator.");
+      setPipelineState('ERROR');
+      tacticalAudio.playAlarm();
+      return;
+    }
+
+    // RBAC Rule 2: Station Operator can ONLY train their assigned station
+    if (assignedStationId !== activeStationId) {
+      setErrorMessage(`ACCESS DENIED: Station Operator for '${assignedStationId}' is not authorized to train model for '${activeStationId}'. Cross-station training is strictly prohibited.`);
+      setPipelineState('ERROR');
+      tacticalAudio.playAlarm();
+      return;
+    }
+
+    // Training Data Rule 3: ONLY uploaded dataset can be trained
+    if (!uploadedDataset || uploadedDataset.length === 0) {
+      setErrorMessage("Training requires a user-uploaded CSV or JSON dataset. Open-Meteo observations cannot be used for training.");
+      setPipelineState('ERROR');
+      tacticalAudio.playAlarm();
+      return;
+    }
+
+    if (uploadedDataset.length < 20) {
+      setErrorMessage(`Insufficient historical records in uploaded file for ${activeStationId}. Found ${uploadedDataset.length} rows; minimum 20 required.`);
       setPipelineState('ERROR');
       tacticalAudio.playAlarm();
       return;
@@ -190,7 +229,8 @@ export const StationUpload = () => {
     }
 
     const versionNum = activeModel ? `v1.${(Math.random() * 8 + 1).toFixed(0)}` : "v1.0";
-    const res = await trainStationModel(activeStationId, datasetRows, versionNum);
+    // Training strictly uses ONLY the uploaded dataset
+    const res = await trainStationModel(activeStationId, uploadedDataset, versionNum);
 
     if (res.success) {
       setTrainedResult(res.result.modelCard);
@@ -202,6 +242,12 @@ export const StationUpload = () => {
       tacticalAudio.playAlarm();
     }
   };
+
+  const displayedRows = activeTableSource === 'uploaded'
+    ? uploadedDataset
+    : activeTableSource === 'openmeteo'
+    ? openMeteoHistory
+    : [];
 
   return (
     <>
@@ -216,9 +262,10 @@ export const StationUpload = () => {
               className="cyber-input"
               value={activeStationId}
               onChange={(e) => handleStationChange(e.target.value)}
+              disabled={isOperator}
               style={{ background: '#050811', padding: '4px 8px', fontSize: '0.78rem' }}
             >
-              {stations.map(st => (
+              {(isOperator && assignedStationId ? stations.filter(s => s.id === assignedStationId) : stations).map(st => (
                 <option key={st.id} value={st.id}>{st.id} - {st.name}</option>
               ))}
             </select>
@@ -229,6 +276,21 @@ export const StationUpload = () => {
         </div>
 
         <div className="cyber-card-body">
+          {/* Central Admin Read-Only Notice */}
+          {isAdmin && (
+            <div style={{ background: 'rgba(255, 170, 0, 0.08)', border: '1px solid rgba(255, 170, 0, 0.3)', padding: '12px 16px', borderRadius: '6px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <i className="fa-solid fa-shield-halved text-amber" style={{ fontSize: '1.5rem' }}></i>
+              <div>
+                <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.82rem', color: 'var(--neon-amber)', fontWeight: 800 }}>
+                  CENTRAL ADMIN AUDIT MODE (READ-ONLY)
+                </div>
+                <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  Training controls are restricted. Central Admin is not permitted to upload datasets or train station-specific ML models. Historical data ingestion and model training must be executed by the authorized Station Operator.
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Architecture Banner */}
           <div style={{ background: 'rgba(0,240,255,0.05)', border: '1px solid rgba(0,240,255,0.2)', padding: '12px 16px', borderRadius: '6px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
             <div>
@@ -246,9 +308,9 @@ export const StationUpload = () => {
             </div>
           </div>
 
-          {/* Open-Meteo Live Historical Fetch & Ingestion Action Row */}
+          {/* Ingestion & Training Action Row */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px', marginBottom: '16px' }}>
-            {/* Open-Meteo Real Data Ingestion */}
+            {/* Open-Meteo Real Data Ingestion (Observation Reference Only) */}
             <div style={{ background: 'rgba(10,15,29,0.8)', border: '1px solid var(--neon-cyan)', borderRadius: '6px', padding: '18px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
@@ -260,13 +322,16 @@ export const StationUpload = () => {
                 <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
                   Directly fetch real 7-day (168-hour) historical observations from Open-Meteo for <strong>{currentStation.name}</strong>'s exact geographic coordinates ({currentStation.lat?.toFixed(2)}°N, {currentStation.lon?.toFixed(2)}°E).
                 </p>
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                  <i className="fa-solid fa-circle-info"></i> Fetched Open-Meteo observations are displayed for baseline review and cannot be used as training data.
+                </div>
                 {apiFeedback && (
                   <div style={{ fontSize: '0.72rem', color: 'var(--neon-green)', fontFamily: 'var(--font-mono)', background: 'rgba(0,255,102,0.08)', padding: '6px 10px', borderRadius: '4px', marginBottom: '10px' }}>
                     <i className="fa-solid fa-circle-check"></i> {apiFeedback}
                   </div>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                 <button
                   className="cyber-btn btn-sm btn-primary"
                   onClick={() => handleFetchOpenMeteoHistory(7)}
@@ -276,33 +341,106 @@ export const StationUpload = () => {
                   <i className={`fa-solid ${isFetchingApi ? 'fa-spinner fa-spin' : 'fa-bolt'}`}></i>
                   <span>{isFetchingApi ? 'Fetching Open-Meteo...' : `Fetch Real 7-Day History (168 Obs)`}</span>
                 </button>
-                <button
-                  className="cyber-btn btn-sm btn-green"
-                  onClick={runTrainingPipeline}
-                  disabled={pipelineState === 'TRAINING' || datasetRows.length < 20}
-                >
-                  <i className="fa-solid fa-brain"></i> {pipelineState === 'TRAINING' ? "Training..." : `Train Model (${datasetRows.length} Rows)`}
-                </button>
+                {openMeteoHistory.length > 0 && activeTableSource !== 'openmeteo' && (
+                  <button
+                    className="cyber-btn btn-sm"
+                    onClick={() => setActiveTableSource('openmeteo')}
+                    style={{ fontSize: '0.7rem' }}
+                  >
+                    <i className="fa-solid fa-eye"></i> View 7-Day History
+                  </button>
+                )}
               </div>
             </div>
 
-            {/* Custom CSV / File Drop Area */}
-            <div style={{ border: '2px dashed var(--border-medium)', borderRadius: '6px', padding: '20px', textAlign: 'center', background: 'rgba(5,8,17,0.7)', cursor: 'pointer', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-              <input
-                type="file"
-                accept=".csv,.json"
-                onChange={handleFileUpload}
-                style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
-              />
-              <i className="fa-solid fa-file-arrow-up" style={{ fontSize: '1.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}></i>
-              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 700 }}>
-                OR UPLOAD CUSTOM CSV / JSON DATASET
+            {/* Custom CSV / JSON Upload & Training Card */}
+            <div style={{ background: 'rgba(10,15,29,0.8)', border: '1px solid var(--border-medium)', borderRadius: '6px', padding: '18px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.82rem', color: 'var(--neon-green)', fontWeight: 800 }}>
+                    <i className="fa-solid fa-file-arrow-up"></i> UPLOAD CUSTOM CSV / JSON DATASET
+                  </div>
+                  <span className="cyber-badge badge-green" style={{ fontSize: '0.65rem' }}>TRAINING SOURCE</span>
+                </div>
+                <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                  Upload station datalogger CSV or JSON records to train a dedicated Isolation Forest model for <strong>{activeStationId}</strong>.
+                </p>
+
+                {/* File Drop & Browse Area */}
+                <div style={{
+                  border: `2px dashed ${!isAuthorizedForStation ? 'var(--border-subtle)' : 'var(--border-medium)'}`,
+                  borderRadius: '6px',
+                  padding: '14px',
+                  textAlign: 'center',
+                  background: 'rgba(5,8,17,0.7)',
+                  cursor: !isAuthorizedForStation ? 'not-allowed' : 'pointer',
+                  position: 'relative',
+                  marginBottom: '12px',
+                  opacity: !isAuthorizedForStation ? 0.6 : 1
+                }}>
+                  <input
+                    type="file"
+                    accept=".csv,.json"
+                    onChange={handleFileUpload}
+                    disabled={!isAuthorizedForStation}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: !isAuthorizedForStation ? 'not-allowed' : 'pointer' }}
+                  />
+                  <i className={`fa-solid ${!isAuthorizedForStation ? 'fa-lock text-amber' : uploadedDataset.length > 0 ? 'fa-cloud-arrow-up text-green' : 'fa-cloud-arrow-up'}`} style={{ fontSize: '1.4rem', marginBottom: '4px' }}></i>
+                  <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.76rem', color: !isAuthorizedForStation ? 'var(--neon-amber)' : 'var(--text-primary)', fontWeight: 700 }}>
+                    {!isAuthorizedForStation
+                      ? (isAdmin ? "DATASET UPLOAD RESTRICTED (CENTRAL ADMIN READ-ONLY)" : `DATASET UPLOAD RESTRICTED (ASSIGNED TO ${assignedStationId})`)
+                      : uploadedFileName ? `FILE: ${uploadedFileName}` : 'DRAG & DROP CSV / JSON FILE HERE OR BROWSE'}
+                  </div>
+                  <div style={{ fontSize: '0.68rem', color: !isAuthorizedForStation ? 'var(--text-muted)' : uploadedDataset.length > 0 ? 'var(--neon-green)' : 'var(--text-muted)', marginTop: '2px' }}>
+                    {!isAuthorizedForStation
+                      ? "Only the designated Station Operator can upload training data"
+                      : uploadedDataset.length > 0 ? `${uploadedDataset.length} rows parsed and ready for model training` : `Minimum 20 rows required for Isolation Forest calibration`}
+                  </div>
+                </div>
               </div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                Drag & drop field logger CSV files to train {activeStationId}
+
+              {/* Train Model Action (Bound ONLY to Uploaded Dataset) */}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <button
+                  className="cyber-btn btn-sm btn-green"
+                  onClick={runTrainingPipeline}
+                  disabled={!isAuthorizedForStation || pipelineState === 'TRAINING' || !uploadedDataset || uploadedDataset.length < 20}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    opacity: !isAuthorizedForStation ? 0.5 : 1,
+                    cursor: !isAuthorizedForStation ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  <i className={`fa-solid ${!isAuthorizedForStation ? 'fa-lock' : 'fa-brain'}`}></i>
+                  <span>
+                    {!isOperator
+                      ? "Train Model (ACCESS DENIED — Central Admin Restricted)"
+                      : !isAuthorizedForStation
+                      ? `Train Model (ACCESS DENIED — Assigned to ${assignedStationId})`
+                      : pipelineState === 'TRAINING'
+                      ? "Training Isolation Forest..."
+                      : uploadedDataset.length >= 20
+                      ? `Train Model (${uploadedDataset.length} Uploaded Rows)`
+                      : uploadedDataset.length > 0
+                      ? `Train Model (${uploadedDataset.length}/20 Rows — Min 20 Needed)`
+                      : "Train Model (Upload Dataset Required)"}
+                  </span>
+                </button>
+                {uploadedDataset.length > 0 && activeTableSource !== 'uploaded' && (
+                  <button
+                    className="cyber-btn btn-sm"
+                    onClick={() => setActiveTableSource('uploaded')}
+                    style={{ fontSize: '0.7rem' }}
+                  >
+                    <i className="fa-solid fa-eye"></i> View Uploaded Rows
+                  </button>
+                )}
               </div>
             </div>
           </div>
+
 
           {/* 7-Step Pipeline Status Tracker */}
           {(pipelineState === 'TRAINING' || pipelineState === 'COMPLETED' || pipelineState === 'ERROR') && (
@@ -359,9 +497,15 @@ export const StationUpload = () => {
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('station-hud')}>
-                      <i className="fa-solid fa-terminal"></i> Launch {trainedResult.station_id} Cockpit HUD
-                    </button>
+                    {isOperator ? (
+                      <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('station-hud')}>
+                        <i className="fa-solid fa-terminal"></i> Launch {trainedResult.station_id} Cockpit HUD
+                      </button>
+                    ) : (
+                      <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('model-governance')}>
+                        <i className="fa-solid fa-brain"></i> View in Model Governance
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -379,7 +523,12 @@ export const StationUpload = () => {
           <div style={{ marginTop: '16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.8rem', color: 'var(--neon-cyan)', fontWeight: 700 }}>
-                <i className="fa-solid fa-table"></i> INGESTED OBSERVATION FRAMES ({datasetRows.length} ROWS)
+                <i className="fa-solid fa-table"></i>{' '}
+                {activeTableSource === 'uploaded'
+                  ? `UPLOADED OBSERVATION FRAMES (${uploadedDataset.length} ROWS — TRAINABLE)`
+                  : activeTableSource === 'openmeteo'
+                  ? `OPEN-METEO 7-DAY HISTORY (${openMeteoHistory.length} ROWS — OBSERVATION ONLY, NOT TRAINABLE)`
+                  : `OBSERVATION FRAMES (0 ROWS)`}
               </div>
               <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                 Target Feature Vector: <code>[temp, hum, pres, wind, rain, dew_point, rate_of_change]</code>
@@ -400,14 +549,14 @@ export const StationUpload = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {datasetRows.length === 0 ? (
+                  {displayedRows.length === 0 ? (
                     <tr>
                       <td colSpan="7" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px' }}>
-                        No historical rows loaded yet. Click <strong>"Fetch Real 7-Day History"</strong> above to load meteorological data from Open-Meteo API.
+                        No observation rows loaded yet. Upload a custom CSV/JSON file to train <strong>{activeStationId}</strong>, or fetch Open-Meteo 7-day history for reference.
                       </td>
                     </tr>
                   ) : (
-                    datasetRows.slice(0, 100).map((row, idx) => (
+                    displayedRows.slice(0, 100).map((row, idx) => (
                       <tr key={idx}>
                         <td style={{ color: 'var(--text-muted)' }}>#{idx + 1}</td>
                         <td>{row.timestamp}</td>
@@ -428,3 +577,4 @@ export const StationUpload = () => {
     </>
   );
 };
+
