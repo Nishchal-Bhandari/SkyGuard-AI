@@ -1,10 +1,11 @@
 import React from 'react';
 import { useWeather } from '../../context/WeatherContext';
+import { DEFAULT_MAINTENANCE_CHECKLIST } from '../../utils/seedData';
 import { tacticalAudio } from '../../utils/audio';
 
 export const StationChecklist = () => {
   const { checklists, updateChecklist, activeStationId } = useWeather();
-  const stationTasks = checklists[activeStationId] || checklists["AWS-07"] || [];
+  const stationTasks = checklists[activeStationId] || DEFAULT_MAINTENANCE_CHECKLIST;
 
   const handleSignAudit = () => {
     tacticalAudio.playSuccess();
