@@ -17,21 +17,28 @@ export const CredentialModal = ({ isOpen, onClose }) => {
   const [status, setStatus] = useState('ACTIVE');
   const [error, setError] = useState('');
 
+  const [submitting, setSubmitting] = useState(false);
+
   if (!isOpen) return null;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!stationId || !stationName || !username || !password) {
       setError('Please fill in all required fields.');
       return;
     }
 
-    const res = createStationCredential(stationId, stationName, username, password, status, {
+    setSubmitting(true);
+    setError('');
+
+    const res = await createStationCredential(stationId, stationName, username, password, status, {
       region,
       lat: parseFloat(lat) || 0,
       lon: parseFloat(lon) || 0,
       elevation: parseFloat(elevation) || 0
     });
+
+    setSubmitting(false);
 
     if (res.success) {
       registerStation({
@@ -45,7 +52,7 @@ export const CredentialModal = ({ isOpen, onClose }) => {
       tacticalAudio.playSuccess();
       onClose();
     } else {
-      setError(res.message);
+      setError(res.message || "Failed to provision station.");
       tacticalAudio.playAlarm();
     }
   };

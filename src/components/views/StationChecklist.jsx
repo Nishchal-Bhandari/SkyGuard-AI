@@ -1,12 +1,13 @@
 import React from 'react';
 import { useWeather } from '../../context/WeatherContext';
+import { DEFAULT_MAINTENANCE_CHECKLIST } from '../../utils/seedData';
 import { tacticalAudio } from '../../utils/audio';
 
 export const StationChecklist = () => {
   const { checklists, updateChecklist, activeStationId, setCurrentView } = useWeather();
-  const stationTasks = checklists[activeStationId] || [];
+  const stationTasks = checklists[activeStationId] || DEFAULT_MAINTENANCE_CHECKLIST;
 
-  if (!activeStationId || stationTasks.length === 0) {
+  if (!activeStationId) {
     return (
       <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
         <i className="fa-solid fa-list-check" style={{ fontSize: '3rem', color: 'var(--neon-cyan)', marginBottom: '16px', opacity: 0.8 }}></i>
