@@ -1,9 +1,0 @@
-# Ignore Python bytecode
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Ignore large SQLite database binaries, backups, and large export dumps in git
-backups/*.db*
-exports/*.csv
-exports/*.parquet
