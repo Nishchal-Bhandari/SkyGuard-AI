@@ -55,6 +55,7 @@ export const AuthProvider = ({ children }) => {
         stationId: s.station_id,
         stationName: s.station_name,
         username: s.username,
+        password: s.access_key || s.password || "sentinel2026",
         region: s.region,
         lat: s.latitude,
         lon: s.longitude,
@@ -219,6 +220,7 @@ export const AuthProvider = ({ children }) => {
     }
     try {
       await apiClient.resetStationPassword(stationId, newPassword);
+      setStationCredentials(prev => prev.map(s => s.stationId === stationId ? { ...s, password: newPassword } : s));
       return true;
     } catch (err) {
       alert(`Failed to reset password: ${err.message}`);
