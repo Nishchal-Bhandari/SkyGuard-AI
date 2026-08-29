@@ -218,9 +218,14 @@ export const StationHUD = () => {
             </span>
             <span className={`cyber-badge ${badgeClass}`}>{station.status}</span>
             <span className="cyber-badge badge-offline" style={{ fontSize: '0.68rem' }}>{station.region || "Local Microclimate"}</span>
+            {station.weather_meta && (
+              <span className="cyber-badge" style={{ fontSize: '0.72rem', background: 'rgba(0,240,255,0.1)', color: station.weather_meta.color, borderColor: station.weather_meta.color, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <i className={`fa-solid ${station.weather_meta.icon}`}></i> {station.weather_meta.label}
+              </span>
+            )}
           </div>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-            Coordinates: <strong style={{ color: 'var(--text-secondary)' }}>{station.lat?.toFixed(4)}°N, {station.lon?.toFixed(4)}°E</strong> | Elevation: <strong style={{ color: 'var(--text-secondary)' }}>{station.elevation || 500}m</strong>
+            Coordinates: <strong style={{ color: 'var(--text-secondary)' }}>{station.lat?.toFixed(4)}°N, {station.lon?.toFixed(4)}°E</strong> | Elevation: <strong style={{ color: 'var(--text-secondary)' }}>{station.elevation || 500}m</strong> | Source: <strong style={{ color: 'var(--neon-cyan)' }}>Open-Meteo High-Resolution Stream</strong>
           </div>
         </div>
 

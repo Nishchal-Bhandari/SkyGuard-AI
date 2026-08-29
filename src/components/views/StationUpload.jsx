@@ -4,7 +4,16 @@ import { BENCHMARK_HISTORICAL_DATA } from '../../utils/seedData';
 import { tacticalAudio } from '../../utils/audio';
 
 export const StationUpload = () => {
-  const { activeStationId, stations, setActiveStationId, trainStationModel, activeStationModels, setCurrentView } = useWeather();
+  const {
+    activeStationId,
+    stations,
+    setActiveStationId,
+    trainStationModel,
+    activeStationModels,
+    setCurrentView,
+    fetchHistoricalTrainingDataset
+  } = useWeather();
+
   const currentStation = stations.find(s => s.id === activeStationId) || stations[0] || {};
   const activeModel = activeStationModels[activeStationId];
 
@@ -17,6 +26,8 @@ export const StationUpload = () => {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [trainedResult, setTrainedResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [isFetchingApi, setIsFetchingApi] = useState(false);
+  const [apiFeedback, setApiFeedback] = useState('');
 
   if (!stations || stations.length === 0) {
     return (
@@ -26,11 +37,16 @@ export const StationUpload = () => {
           NO REGISTERED WEATHER STATIONS
         </div>
         <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
-          All mock stations have been cleared. To train an Isolation Forest model, please provision a weather station first via Station Credentials.
+          To train an Isolation Forest model, please load the preset Indian AWS fleet or provision a weather station first via Station Credentials.
         </p>
-        <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
-          <i className="fa-solid fa-key"></i> Provision Weather Station
-        </button>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
+          <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('command-center')}>
+            <i className="fa-solid fa-tower-observation"></i> Open Fleet Command
+          </button>
+          <button className="cyber-btn btn-sm" onClick={() => setCurrentView('credentials')}>
+            <i className="fa-solid fa-key"></i> Provision Weather Station
+          </button>
+        </div>
       </div>
     );
   }
@@ -50,15 +66,43 @@ export const StationUpload = () => {
     setDatasetRows(BENCHMARK_HISTORICAL_DATA[id] || BENCHMARK_HISTORICAL_DATA["AWS-07"] || []);
     setPipelineState('IDLE');
     setTrainedResult(null);
+    setApiFeedback('');
     tacticalAudio.playClick();
   };
 
   const handleLoadBenchmark = () => {
-    const data = BENCHMARK_HISTORICAL_DATA[activeStationId] || BENCHMARK_HISTORICAL_DATA["AWS-07"];
+    const data = BENCHMARK_HISTORICAL_DATA[activeStationId] || BENCHMARK_HISTORICAL_DATA["AWS-07"] || [];
     setDatasetRows([...data]);
     setPipelineState('IDLE');
     setTrainedResult(null);
+    setApiFeedback('');
     tacticalAudio.playSuccess();
+  };
+
+  /**
+   * Fetch 7-Day Real Hourly Historical Climatology from Open-Meteo API
+   */
+  const handleFetchOpenMeteoHistory = async (pastDays = 7) => {
+    const lat = currentStation.lat !== undefined ? currentStation.lat : 17.3850;
+    const lon = currentStation.lon !== undefined ? currentStation.lon : 78.4867;
+    
+    setIsFetchingApi(true);
+    setApiFeedback(`Connecting to Open-Meteo API for ${currentStation.name} (${lat}°N, ${lon}°E)...`);
+    tacticalAudio.playClick();
+
+    try {
+      const res = await fetchHistoricalTrainingDataset(lat, lon, pastDays);
+      setDatasetRows(res.rows);
+      setApiFeedback(`Successfully ingested ${res.totalRows} real hourly observations from Open-Meteo API (${pastDays} days history). Ready to train.`);
+      setPipelineState('IDLE');
+      setTrainedResult(null);
+      tacticalAudio.playSuccess();
+    } catch (err) {
+      setApiFeedback(`Failed to fetch from Open-Meteo: ${err.message}`);
+      tacticalAudio.playAlarm();
+    } finally {
+      setIsFetchingApi(false);
+    }
   };
 
   const handleFileUpload = (e) => {
@@ -106,6 +150,7 @@ export const StationUpload = () => {
         tacticalAudio.playSuccess();
         setPipelineState('IDLE');
         setTrainedResult(null);
+        setApiFeedback('');
       } catch (err) {
         alert(`Error parsing file: ${err.message}`);
         tacticalAudio.playAlarm();
@@ -191,7 +236,7 @@ export const StationUpload = () => {
                 <i className="fa-solid fa-layer-group"></i> ZERO GLOBAL MODELS — 100% STATION-SPECIFIC CALIBRATION
               </div>
               <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                Currently configuring: <strong>{currentStation.name} ({activeStationId})</strong> | Region: <strong>{currentStation.region}</strong> | Elevation: <strong>{currentStation.elevation || 500}m</strong>
+                Currently configuring: <strong>{currentStation.name} ({activeStationId})</strong> | Region: <strong>{currentStation.region}</strong> | Coordinates: <strong>{currentStation.lat?.toFixed(2)}°N, {currentStation.lon?.toFixed(2)}°E</strong>
               </div>
             </div>
             <div>
@@ -201,46 +246,60 @@ export const StationUpload = () => {
             </div>
           </div>
 
-          {/* Upload and Ingestion Action Row */}
+          {/* Open-Meteo Live Historical Fetch & Ingestion Action Row */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px', marginBottom: '16px' }}>
-            {/* File Drop Area */}
-            <div style={{ border: '2px dashed var(--border-medium)', borderRadius: '6px', padding: '24px 20px', textAlign: 'center', background: 'rgba(5,8,17,0.7)', cursor: 'pointer', position: 'relative' }}>
+            {/* Open-Meteo Real Data Ingestion */}
+            <div style={{ background: 'rgba(10,15,29,0.8)', border: '1px solid var(--neon-cyan)', borderRadius: '6px', padding: '18px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.82rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+                    <i className="fa-solid fa-cloud-arrow-down"></i> FETCH LIVE HISTORICAL CLIMATOLOGY
+                  </div>
+                  <span className="cyber-badge badge-normal" style={{ fontSize: '0.65rem' }}>OPEN-METEO API</span>
+                </div>
+                <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                  Directly fetch real 7-day (168-hour) historical observations from Open-Meteo for <strong>{currentStation.name}</strong>'s exact geographic coordinates ({currentStation.lat?.toFixed(2)}°N, {currentStation.lon?.toFixed(2)}°E).
+                </p>
+                {apiFeedback && (
+                  <div style={{ fontSize: '0.72rem', color: 'var(--neon-green)', fontFamily: 'var(--font-mono)', background: 'rgba(0,255,102,0.08)', padding: '6px 10px', borderRadius: '4px', marginBottom: '10px' }}>
+                    <i className="fa-solid fa-circle-check"></i> {apiFeedback}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  className="cyber-btn btn-sm btn-primary"
+                  onClick={() => handleFetchOpenMeteoHistory(7)}
+                  disabled={isFetchingApi}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <i className={`fa-solid ${isFetchingApi ? 'fa-spinner fa-spin' : 'fa-bolt'}`}></i>
+                  <span>{isFetchingApi ? 'Fetching Open-Meteo...' : `Fetch Real 7-Day History (168 Obs)`}</span>
+                </button>
+                <button
+                  className="cyber-btn btn-sm btn-green"
+                  onClick={runTrainingPipeline}
+                  disabled={pipelineState === 'TRAINING' || datasetRows.length < 20}
+                >
+                  <i className="fa-solid fa-brain"></i> {pipelineState === 'TRAINING' ? "Training..." : `Train Model (${datasetRows.length} Rows)`}
+                </button>
+              </div>
+            </div>
+
+            {/* Custom CSV / File Drop Area */}
+            <div style={{ border: '2px dashed var(--border-medium)', borderRadius: '6px', padding: '20px', textAlign: 'center', background: 'rgba(5,8,17,0.7)', cursor: 'pointer', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
               <input
                 type="file"
                 accept=".csv,.json"
                 onChange={handleFileUpload}
                 style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
               />
-              <i className="fa-solid fa-cloud-arrow-up" style={{ fontSize: '2rem', color: 'var(--neon-cyan)', marginBottom: '8px' }}></i>
-              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 700 }}>
-                DROP HISTORICAL CSV / JSON LOGS HERE
+              <i className="fa-solid fa-file-arrow-up" style={{ fontSize: '1.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}></i>
+              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 700 }}>
+                OR UPLOAD CUSTOM CSV / JSON DATASET
               </div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                Upload datalogger observations to train {activeStationId}'s dedicated model
-              </div>
-            </div>
-
-            {/* Quick Benchmark Loader */}
-            <div style={{ background: 'rgba(10,15,29,0.6)', border: '1px solid var(--border-subtle)', borderRadius: '6px', padding: '18px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.8rem', color: 'var(--neon-green)', fontWeight: 700, marginBottom: '6px' }}>
-                  <i className="fa-solid fa-database"></i> LOAD BENCHMARK CLIMATOLOGY
-                </div>
-                <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
-                  Load real pre-screened microclimate observations ({datasetRows.length} frames ready) specifically calibrated for <strong>{currentStation.region}</strong> terrain.
-                </p>
-              </div>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <button className="cyber-btn btn-sm btn-green" onClick={handleLoadBenchmark}>
-                  <i className="fa-solid fa-bolt"></i> Reload {activeStationId} Benchmark
-                </button>
-                <button
-                  className="cyber-btn btn-sm btn-primary"
-                  onClick={runTrainingPipeline}
-                  disabled={pipelineState === 'TRAINING'}
-                >
-                  <i className="fa-solid fa-brain"></i> {pipelineState === 'TRAINING' ? "Training in Progress..." : `Train Model for ${activeStationId}`}
-                </button>
+                Drag & drop field logger CSV files to train {activeStationId}
               </div>
             </div>
           </div>
@@ -256,7 +315,6 @@ export const StationUpload = () => {
                 {PIPELINE_STEPS.map((step, idx) => {
                   const isDone = pipelineState === 'COMPLETED' || currentStepIndex > idx;
                   const isCurrent = pipelineState === 'TRAINING' && currentStepIndex === idx;
-                  const isPending = pipelineState === 'TRAINING' && currentStepIndex < idx;
 
                   let borderColor = 'var(--border-subtle)';
                   let icon = 'fa-circle';
@@ -302,73 +360,69 @@ export const StationUpload = () => {
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('station-hud')}>
-                      <i className="fa-solid fa-gauge-high"></i> View in Station HUD
-                    </button>
-                    <button className="cyber-btn btn-sm" onClick={() => setCurrentView('model-governance')}>
-                      <i className="fa-solid fa-brain"></i> Model Governance
+                      <i className="fa-solid fa-terminal"></i> Launch {trainedResult.station_id} Cockpit HUD
                     </button>
                   </div>
                 </div>
               )}
 
+              {/* Error Box */}
               {pipelineState === 'ERROR' && (
-                <div style={{ marginTop: '14px', background: 'rgba(255,0,85,0.1)', border: '1px solid var(--neon-red)', borderRadius: '6px', padding: '12px', color: 'var(--neon-red)', fontSize: '0.75rem' }}>
-                  <i className="fa-solid fa-triangle-exclamation"></i> {errorMessage}
+                <div style={{ marginTop: '16px', background: 'rgba(255,0,85,0.08)', border: '1px solid var(--neon-crimson)', borderRadius: '6px', padding: '12px', color: 'var(--neon-crimson)', fontSize: '0.78rem' }}>
+                  <i className="fa-solid fa-triangle-exclamation"></i> <strong>Training Failed:</strong> {errorMessage}
                 </div>
               )}
             </div>
           )}
 
-          {/* Parsed Batch Data Preview */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.78rem', color: 'var(--neon-cyan)', fontWeight: 700 }}>
-              LOADED OBSERVATIONS FOR CALIBRATION ({datasetRows.length} ROWS):
+          {/* Dataset Preview Table */}
+          <div style={{ marginTop: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.8rem', color: 'var(--neon-cyan)', fontWeight: 700 }}>
+                <i className="fa-solid fa-table"></i> INGESTED OBSERVATION FRAMES ({datasetRows.length} ROWS)
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                Target Feature Vector: <code>[temp, hum, pres, wind, rain, dew_point, rate_of_change]</code>
+              </div>
             </div>
-            <span className="cyber-badge badge-normal">
-              {datasetRows.length >= 20 ? `${datasetRows.length} RECORDS READY` : "INSUFFICIENT DATA (< 20 ROWS)"}
-            </span>
-          </div>
 
-          <div className="tactical-table-wrapper" style={{ maxHeight: '250px' }}>
-            <table className="tactical-table">
-              <thead>
-                <tr>
-                  <th>TIMESTAMP</th>
-                  <th>TEMPERATURE</th>
-                  <th>HUMIDITY</th>
-                  <th>PRESSURE</th>
-                  <th>WIND SPEED</th>
-                  <th>RAINFALL</th>
-                  <th>PRE-SCREEN QC</th>
-                </tr>
-              </thead>
-              <tbody>
-                {datasetRows.slice(0, 15).map((r, idx) => {
-                  const isOut = (r.temp < -30 || r.temp > 60 || r.hum < 0 || r.hum > 100);
-                  return (
-                    <tr key={idx}>
-                      <td>{r.timestamp}</td>
-                      <td style={{ color: isOut ? 'var(--neon-red)' : 'inherit' }}>{r.temp}°C</td>
-                      <td style={{ color: isOut ? 'var(--neon-red)' : 'inherit' }}>{r.hum}%</td>
-                      <td>{r.pres} hPa</td>
-                      <td>{r.wind ?? 10} km/h</td>
-                      <td>{r.rain ?? 0} mm</td>
-                      <td>
-                        <span className={`cyber-badge ${isOut ? 'badge-critical' : 'badge-normal'}`}>
-                          {isOut ? "OUT OF BOUNDS (SCRUBBED)" : "NOMINAL"}
-                        </span>
+            <div className="tactical-table-wrapper" style={{ maxHeight: '280px', overflowY: 'auto' }}>
+              <table className="tactical-table">
+                <thead>
+                  <tr>
+                    <th>INDEX</th>
+                    <th>TIMESTAMP</th>
+                    <th>TEMPERATURE (°C)</th>
+                    <th>HUMIDITY (%)</th>
+                    <th>PRESSURE (hPa)</th>
+                    <th>WIND SPEED (km/h)</th>
+                    <th>RAINFALL (mm)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {datasetRows.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px' }}>
+                        No historical rows loaded yet. Click <strong>"Fetch Real 7-Day History"</strong> above to load meteorological data from Open-Meteo API.
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {datasetRows.length > 15 && (
-            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: '6px' }}>
-              Showing first 15 of {datasetRows.length} historical records. All valid rows will be fed to feature engineering.
+                  ) : (
+                    datasetRows.slice(0, 100).map((row, idx) => (
+                      <tr key={idx}>
+                        <td style={{ color: 'var(--text-muted)' }}>#{idx + 1}</td>
+                        <td>{row.timestamp}</td>
+                        <td style={{ fontWeight: 600, color: 'var(--neon-cyan)' }}>{row.temp}°C</td>
+                        <td>{row.hum}%</td>
+                        <td>{row.pres} hPa</td>
+                        <td>{row.wind} km/h</td>
+                        <td>{row.rain} mm</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
-          )}
+          </div>
         </div>
       </div>
     </>
