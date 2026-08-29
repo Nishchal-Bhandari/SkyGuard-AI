@@ -30,6 +30,7 @@ class StationSummaryResponse(BaseModel):
     station_id: str
     station_name: str
     username: str
+    access_key: Optional[str] = "sentinel2026"
     latitude: float
     longitude: float
     elevation: float
@@ -70,7 +71,7 @@ def list_stations_admin(admin_user: Dict[str, Any] = Depends(require_admin)):
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, station_id, station_name, username, latitude, longitude,
+            SELECT id, station_id, station_name, username, access_key, latitude, longitude,
                    elevation, region, status, created_by, created_at, updated_at, last_login
             FROM stations
             ORDER BY id ASC
@@ -82,6 +83,7 @@ def list_stations_admin(admin_user: Dict[str, Any] = Depends(require_admin)):
                 station_id=r["station_id"],
                 station_name=r["station_name"],
                 username=r["username"],
+                access_key=r["access_key"] if "access_key" in r.keys() and r["access_key"] else "sentinel2026",
                 latitude=r["latitude"],
                 longitude=r["longitude"],
                 elevation=r["elevation"],
@@ -110,7 +112,7 @@ def create_station(payload: CreateStationRequest, admin_user: Dict[str, Any] = D
         )
     
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    pwd_hash = hash_password(payload.password)
+    pwd_hash = hash_password(payload.password or "sentinel2026")
     
     with get_db() as conn:
         cursor = conn.cursor()
@@ -133,14 +135,15 @@ def create_station(payload: CreateStationRequest, admin_user: Dict[str, Any] = D
         
         cursor.execute("""
             INSERT INTO stations (
-                station_id, station_name, username, password_hash, latitude, longitude,
+                station_id, station_name, username, password_hash, access_key, latitude, longitude,
                 elevation, region, status, created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             clean_station_id,
             payload.station_name.strip(),
             clean_username,
             pwd_hash,
+            payload.password or "sentinel2026",
             payload.latitude,
             payload.longitude,
             payload.elevation or 0.0,
@@ -158,6 +161,7 @@ def create_station(payload: CreateStationRequest, admin_user: Dict[str, Any] = D
             station_id=clean_station_id,
             station_name=payload.station_name.strip(),
             username=clean_username,
+            access_key=payload.password or "sentinel2026",
             latitude=payload.latitude,
             longitude=payload.longitude,
             elevation=payload.elevation or 0.0,
@@ -190,20 +194,19 @@ def batch_create_presets(presets: List[PresetStationItem], admin_user: Dict[str,
             pwd_hash = hash_password(p.password or "sentinel2026")
             cursor.execute("""
                 INSERT INTO stations (
-                    station_id, station_name, username, password_hash, latitude, longitude,
+                    station_id, station_name, username, password_hash, access_key, latitude, longitude,
                     elevation, region, status, created_by, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'admin_presets', ?, ?)
             """, (
                 st_id,
                 p.name.strip(),
                 username,
                 pwd_hash,
+                p.password or "sentinel2026",
                 p.lat,
                 p.lon,
                 p.elevation or 0.0,
                 p.region or "Assigned Region",
-                p.status or "ACTIVE",
-                admin_user.get("sub", "admin"),
                 now_iso,
                 now_iso
             ))
@@ -232,7 +235,7 @@ def get_station_by_id(station_id: str, current_user: Dict[str, Any] = Depends(ge
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, station_id, station_name, username, latitude, longitude,
+            SELECT id, station_id, station_name, username, access_key, latitude, longitude,
                    elevation, region, status, created_by, created_at, updated_at, last_login
             FROM stations
             WHERE station_id = ?
@@ -250,6 +253,7 @@ def get_station_by_id(station_id: str, current_user: Dict[str, Any] = Depends(ge
             station_id=row["station_id"],
             station_name=row["station_name"],
             username=row["username"],
+            access_key=row["access_key"] if "access_key" in row.keys() and row["access_key"] else "sentinel2026",
             latitude=row["latitude"],
             longitude=row["longitude"],
             elevation=row["elevation"],
@@ -305,7 +309,7 @@ def reset_station_password(station_id: str, payload: ResetPasswordRequest, admin
                 detail=f"Weather station '{target_id}' not found."
             )
         
-        cursor.execute("UPDATE stations SET password_hash = ?, updated_at = ? WHERE station_id = ?", (new_hash, now_iso, target_id))
+        cursor.execute("UPDATE stations SET password_hash = ?, access_key = ?, updated_at = ? WHERE station_id = ?", (new_hash, payload.new_password, now_iso, target_id))
         
         return {
             "success": True,

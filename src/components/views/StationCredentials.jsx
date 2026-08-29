@@ -4,6 +4,7 @@ import { CredentialModal } from '../modals/CredentialModal';
 import { tacticalAudio } from '../../utils/audio';
 export const StationCredentials = () => {
   const { role, stationCredentials, toggleStationStatus, resetStationPassword, isLoadingStations } = useAuth();
+  const [revealedPasswords, setRevealedPasswords] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
 
   const isAdmin = role === 'admin' || role === 'CENTRAL_ADMIN';
@@ -21,6 +22,20 @@ export const StationCredentials = () => {
       </div>
     );
   }
+
+  const toggleReveal = (stationId) => {
+    setRevealedPasswords(prev => ({
+      ...prev,
+      [stationId]: !prev[stationId]
+    }));
+    tacticalAudio.playClick();
+  };
+
+  const copyPassword = (password) => {
+    navigator.clipboard.writeText(password);
+    tacticalAudio.playSuccess();
+    alert("Passphrase copied to clipboard.");
+  };
 
   const handleToggleStatus = async (stationId) => {
     tacticalAudio.playClick();
@@ -82,31 +97,50 @@ export const StationCredentials = () => {
                     <th>STATION NAME</th>
                     <th>REGION & COORDINATES</th>
                     <th>USERNAME</th>
-                    <th>SECURITY</th>
+                    <th>SECURITY / ACCESS KEY</th>
                     <th>STATUS</th>
                     <th>LAST LOGIN</th>
                     <th>ACTIONS</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {stationCredentials.map(s => (
-                    <tr key={s.stationId}>
-                      <td style={{ fontWeight: 'bold', color: 'var(--neon-cyan)', whiteSpace: 'nowrap' }}>{s.stationId}</td>
-                      <td style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>{s.stationName}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        <span className="cyber-badge badge-offline" style={{ fontSize: '0.68rem' }}>{s.region}</span>
-                        <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                          {s.lat?.toFixed(2)}°N, {s.lon?.toFixed(2)}°E ({s.elevation || 0}m)
-                        </div>
-                      </td>
-                      <td style={{ whiteSpace: 'nowrap' }}><code>{s.username}</code></td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.74rem', color: 'var(--neon-green)' }}>
-                            <i className="fa-solid fa-shield-halved"></i> PBKDF2-SHA256
-                          </span>
-                        </div>
-                      </td>
+                  {stationCredentials.map(s => {
+                    const isRevealed = !!revealedPasswords[s.stationId];
+                    const pwd = s.password || "sentinel2026";
+                    return (
+                      <tr key={s.stationId}>
+                        <td style={{ fontWeight: 'bold', color: 'var(--neon-cyan)', whiteSpace: 'nowrap' }}>{s.stationId}</td>
+                        <td style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>{s.stationName}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <span className="cyber-badge badge-offline" style={{ fontSize: '0.68rem' }}>{s.region}</span>
+                          <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                            {s.lat?.toFixed(2)}°N, {s.lon?.toFixed(2)}°E ({s.elevation || 0}m)
+                          </div>
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap' }}><code>{s.username}</code></td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: isRevealed ? 'var(--neon-green)' : 'var(--text-muted)' }}>
+                              {isRevealed ? pwd : '••••••••••••'}
+                            </span>
+                            <button
+                              className="cyber-btn btn-sm"
+                              style={{ padding: '2px 6px', fontSize: '0.65rem' }}
+                              title={isRevealed ? "Hide Passphrase" : "Reveal Passphrase"}
+                              onClick={() => toggleReveal(s.stationId)}
+                            >
+                              <i className={`fa-solid ${isRevealed ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                            </button>
+                            <button
+                              className="cyber-btn btn-sm"
+                              style={{ padding: '2px 6px', fontSize: '0.65rem' }}
+                              title="Copy Passphrase"
+                              onClick={() => copyPassword(pwd)}
+                            >
+                              <i className="fa-solid fa-copy"></i>
+                            </button>
+                          </div>
+                        </td>
                       <td style={{ whiteSpace: 'nowrap' }}>
                         <span className={`cyber-badge ${s.status === 'ACTIVE' ? 'badge-normal' : 'badge-critical'}`}>
                           {s.status}
@@ -135,8 +169,9 @@ export const StationCredentials = () => {
                           </button>
                         </div>
                       </td>
-                    </tr>
-                  ))}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
