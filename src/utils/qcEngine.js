@@ -1,5 +1,7 @@
+import { spatialEngine } from './spatialEngine';
+
 export class QCEngine {
-  evaluateObservation(stationId, measurements, health, qcConfig, history, stations) {
+  evaluateObservation(stationId, measurements, health, qcConfig, history, stations, stationMlResult = null) {
     const config = qcConfig;
     const reasons = [];
     const evidence = [];
@@ -79,30 +81,52 @@ export class QCEngine {
       healthScore += 0.4;
     }
 
-    // 6. Spatial "Buddy" Comparison
+    // 6. Nearby Station Spatial Intelligence (Haversine Neighborhood Consensus)
     const station = stations.find(s => s.id === stationId);
-    if (station && station.trusted_peers && station.trusted_peers.length > 0) {
-      const cleanPeers = stations.filter(s => 
-        station.trusted_peers.includes(s.id) && s.status !== "SUSPECT" && s.status !== "CRITICAL"
-      );
+    if (station && station.lat !== undefined && station.lon !== undefined) {
+      const targetObj = {
+        ...station,
+        sensors: {
+          ...station.sensors,
+          temperature: { value: temp },
+          humidity: { value: hum },
+          pressure: { value: pres },
+          rainfall: { value: rain }
+        }
+      };
+      const nearby = spatialEngine.findNearbyStations({
+        targetStation: targetObj,
+        stations,
+        radiusKm: config.spatial_radius_km || 50,
+        maxAgeSeconds: 300
+      });
+      const spatialDev = spatialEngine.computeSpatialDeviation({ targetStation: targetObj, nearbyStations: nearby });
 
-      if (cleanPeers.length > 0) {
-        const peerTemps = cleanPeers.map(p => p.sensors.temperature.value);
-        const peerMedianTemp = peerTemps.reduce((a, b) => a + b, 0) / peerTemps.length;
-        const residual = Math.abs(temp - peerMedianTemp);
-
-        if (residual > 3.0) {
+      if (spatialDev.available && spatialDev.nearby_count > 0) {
+        spatialScore = spatialDev.spatial_deviation_score;
+        if (!spatialDev.spatially_consistent) {
           reasons.push("SPATIAL_OUTLIER");
-          evidence.push(`Station temp ${temp}°C deviates ${residual.toFixed(1)}°C from clean peer median (${peerMedianTemp.toFixed(1)}°C across ${cleanPeers.map(p=>p.id).join(', ')})`);
-          spatialScore = Math.min(1.0, residual / 6.0);
+          evidence.push(`Station temp ${temp}°C deviates ${spatialDev.residual_temp}°C from nearby peer median (${spatialDev.neighborhood_median_temp}°C across ${spatialDev.nearby_count} stations within radius)`);
         }
       }
     }
 
-    // 7. ML Model Anomaly Score Emulator
-    const modelScore = (ruleScore > 0 || spatialScore > 0.4) 
-      ? Math.min(0.98, Math.max(0.65, (ruleScore + spatialScore) * 0.7 + Math.random() * 0.1))
-      : +(Math.random() * 0.15).toFixed(2);
+    // 7. Station-Specific ML Model Inference
+    let modelScore = 0.0;
+    let effectiveRuleWeight = config.rule_weight;
+    let effectiveModelWeight = config.model_weight;
+
+    if (stationMlResult && stationMlResult.has_model) {
+      modelScore = stationMlResult.anomaly_score;
+      if (stationMlResult.is_anomaly) {
+        reasons.push("ML_ISOLATION_OUTLIER");
+        evidence.push(`Station model ${stationMlResult.model_id} flagged anomaly (score: ${modelScore.toFixed(3)} >= threshold ${stationMlResult.threshold})`);
+      }
+    } else {
+      // Zero-model cold start: redistribute ML weight to deterministic rules
+      effectiveRuleWeight = config.rule_weight + config.model_weight;
+      effectiveModelWeight = 0.0;
+    }
 
     // 8. Weather Event Coherence Gate
     if (rain > 30.0 && hum > 85.0 && wind > 30.0) {
@@ -112,8 +136,8 @@ export class QCEngine {
 
     // 9. Multi-Signal Evidence Fusion Formula
     const faultRisk = +(
-      config.rule_weight * Math.min(1.0, ruleScore) +
-      config.model_weight * modelScore +
+      effectiveRuleWeight * Math.min(1.0, ruleScore) +
+      effectiveModelWeight * modelScore +
       config.spatial_weight * spatialScore +
       config.health_weight * healthScore
     ).toFixed(2);

@@ -201,7 +201,7 @@ export const AuthProvider = ({ children }) => {
     });
   };
 
-  const createStationCredential = (stationId, stationName, username, password, status = "ACTIVE") => {
+  const createStationCredential = (stationId, stationName, username, password, status = "ACTIVE", locationData = {}) => {
     const existing = credentials.stations.find(
       s => s.stationId === stationId || s.username.toLowerCase() === username.toLowerCase().trim()
     );
@@ -212,7 +212,10 @@ export const AuthProvider = ({ children }) => {
     const newCred = {
       stationId,
       stationName,
-      region: "Assigned Region",
+      region: locationData.region || "Assigned Region",
+      lat: locationData.lat !== undefined ? parseFloat(locationData.lat) : 18.0,
+      lon: locationData.lon !== undefined ? parseFloat(locationData.lon) : 78.0,
+      elevation: locationData.elevation !== undefined ? parseFloat(locationData.elevation) : 500,
       username: username.trim(),
       password,
       status,

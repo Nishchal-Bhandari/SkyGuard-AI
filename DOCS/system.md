@@ -49,8 +49,8 @@ weather, confirms a fault, or defers.
 | F-02 | Normalize units and timestamps | Every record keeps original unit, canonical unit, source timestamp, UTC timestamp, conversion status |
 | F-03 | Preserve raw observations | Raw payload is immutable and linked to every derived record |
 | F-04 | Run deterministic QC | Range, missingness, duplicate, freshness, rate-of-change, flatline, and internal-consistency rules each emit a reason code |
-| F-05 | Run anomaly models | Rolling robust stats + Isolation Forest (or equivalent) in the MVP; LSTM/autoencoder evaluated offline only |
-| F-06 | Detect spatial anomalies | Compares a station to trusted peers; excludes `SUSPECT`/`REJECTED` peers from the reference set |
+| F-05 | Run station-adaptive anomaly models | Zero global models; dedicated Isolation Forest per station trained on historical upload; deterministic rules fallback until calibrated |
+| F-06 | Nearby station spatial intelligence | Haversine geodetic distance <= radius_km; robust Median & MAD; filters stale/corrupt peers; dual-track anomaly fusion |
 | F-07 | Fuse evidence | Rule + model output produce a calibrated severity, confidence, explanation, and recommended action |
 | F-08 | Support human review | Operator can acknowledge, assign, comment, accept-as-genuine, mark-bad, or reopen |
 | F-09 | Alert responsibly | Dashboard + email/SMS/webhook, with dedup, cooldown, escalation |

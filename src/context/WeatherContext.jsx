@@ -9,6 +9,8 @@ import {
   INITIAL_CHECKLISTS
 } from '../utils/seedData';
 import { qcEngine } from '../utils/qcEngine';
+import { mlPipeline } from '../utils/mlEngine';
+import { spatialEngine } from '../utils/spatialEngine';
 import { tacticalAudio } from '../utils/audio';
 import { useAuth } from './AuthContext';
 
@@ -21,6 +23,15 @@ export const WeatherProvider = ({ children }) => {
   const [incidents, setIncidents] = useState(() => JSON.parse(JSON.stringify(SEED_INCIDENTS)));
   const [qcConfig, setQcConfig] = useState(() => ({ ...INITIAL_QC_CONFIG }));
   const [modelRegistry, setModelRegistry] = useState(() => [...INITIAL_MODEL_REGISTRY]);
+  
+  // Station-Adaptive Model Registry: Map<stationId, Array<Model>>
+  const [stationModels, setStationModels] = useState({});
+  // Active production model per station: Map<stationId, Model>
+  const [activeStationModels, setActiveStationModels] = useState({});
+
+  // Configurable spatial neighbor search radius (km)
+  const [neighborRadiusKm, setNeighborRadiusKm] = useState(50);
+
   const [modelDrift, setModelDrift] = useState(() => ({ ...INITIAL_MODEL_DRIFT }));
   const [externalDataLineage] = useState(() => [...EXTERNAL_DATA_LINEAGE]);
   const [checklists, setChecklists] = useState(() => JSON.parse(JSON.stringify(INITIAL_CHECKLISTS)));
@@ -136,6 +147,38 @@ export const WeatherProvider = ({ children }) => {
             }]);
           }
 
+          const activeModel = activeStationModels[station.id];
+          const stHist = history[station.id] || [];
+          const lastObs = stHist[stHist.length - 1];
+
+          const mlResult = mlPipeline.scoreRealtimeObservation({
+            model: activeModel,
+            observation: { temperature: newTemp, humidity: newHum, pressure: newPres, wind_speed: newWind, rainfall: newRain },
+            lastObservation: lastObs
+          });
+
+          const currentReadingStation = {
+            ...station,
+            sensors: {
+              ...station.sensors,
+              temperature: { ...station.sensors.temperature, value: newTemp },
+              humidity: { ...station.sensors.humidity, value: newHum },
+              pressure: { ...station.sensors.pressure, value: newPres },
+              wind_speed: { ...station.sensors.wind_speed, value: newWind },
+              rainfall: { ...station.sensors.rainfall, value: newRain }
+            }
+          };
+
+          // Nearby Station Spatial Intelligence Layer
+          const spatialAnalysis = spatialEngine.analyzeStation({
+            targetStation: currentReadingStation,
+            stations: prevStations,
+            radiusKm: neighborRadiusKm,
+            maxAgeSeconds: 300,
+            localMl: mlResult,
+            physicalQc: null
+          });
+
           const qcResult = qcEngine.evaluateObservation(
             station.id,
             {
@@ -148,8 +191,16 @@ export const WeatherProvider = ({ children }) => {
             { battery_v: battery, signal_dbm: signal },
             qcConfig,
             history,
-            prevStations
+            prevStations,
+            mlResult
           );
+
+          // Update final assessment with physical QC context
+          const finalAssessment = spatialEngine.fuseAssessment({
+            physicalQc: qcResult,
+            localMl: mlResult,
+            spatialAnalysis: spatialAnalysis.spatial_analysis
+          });
 
           const status = qcResult.quality_state === "SUSPECT" ? (qcResult.fault_risk >= 0.8 ? "CRITICAL" : "SUSPECT")
             : qcResult.quality_state === "GENUINE_EXTREME_CANDIDATE" ? "EXTREME" : "NORMAL";
@@ -193,14 +244,12 @@ export const WeatherProvider = ({ children }) => {
             signal,
             uptime_s: station.uptime_s + 3,
             last_seen: new Date().toISOString(),
-            sensors: {
-              ...station.sensors,
-              temperature: { ...station.sensors.temperature, value: newTemp },
-              humidity: { ...station.sensors.humidity, value: newHum },
-              pressure: { ...station.sensors.pressure, value: newPres },
-              wind_speed: { ...station.sensors.wind_speed, value: newWind },
-              rainfall: { ...station.sensors.rainfall, value: newRain }
-            }
+            ml_model: mlResult,
+            model_status: activeModel ? "ACTIVE_PRODUCTION" : "PENDING_CALIBRATION",
+            active_model_id: activeModel ? activeModel.modelCard.model_id : null,
+            spatial_data: spatialAnalysis,
+            final_assessment: finalAssessment,
+            sensors: currentReadingStation.sensors
           };
         });
 
@@ -238,7 +287,7 @@ export const WeatherProvider = ({ children }) => {
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [qcConfig, activeFaults, isOfflineMode, role]);
+  }, [qcConfig, activeFaults, isOfflineMode, role, activeStationModels, neighborRadiusKm]);
 
   const injectFault = (stationId, faultType) => {
     setActiveFaults(prev => ({
@@ -330,9 +379,75 @@ export const WeatherProvider = ({ children }) => {
     tacticalAudio.playClick();
   };
 
-  const rollbackModel = (modelId) => {
-    tacticalAudio.playAlarm();
-    alert(`Model ${modelId} has been rolled back to fallback baseline. Active inference reverted to v1.3.8.`);
+  const trainStationModel = async (stationId, rawDataset, version = "v1.0") => {
+    const stationProfile = stations.find(s => s.id === stationId) || { id: stationId, name: stationId };
+    try {
+      const result = await mlPipeline.trainStationModel({
+        stationId,
+        stationProfile,
+        rawDataset,
+        version
+      });
+
+      // Update stationModels history for this station
+      setStationModels(prev => ({
+        ...prev,
+        [stationId]: [result, ...(prev[stationId] || [])]
+      }));
+
+      // Set active production model
+      setActiveStationModels(prev => ({
+        ...prev,
+        [stationId]: result
+      }));
+
+      // Update modelRegistry state with new model card
+      setModelRegistry(prev => {
+        const filtered = prev.filter(m => m.model_id !== result.modelCard.model_id);
+        return [result.modelCard, ...filtered];
+      });
+
+      // Update station profile status to NORMAL and link active model
+      setStations(prev => prev.map(s => {
+        if (s.id === stationId) {
+          return {
+            ...s,
+            status: "NORMAL",
+            model_status: "ACTIVE_PRODUCTION",
+            active_model_id: result.modelCard.model_id
+          };
+        }
+        return s;
+      }));
+
+      tacticalAudio.playSuccess();
+      return { success: true, result };
+    } catch (err) {
+      tacticalAudio.playAlarm();
+      return { success: false, error: err.message };
+    }
+  };
+
+  const rollbackModel = (stationId, targetModelId = null) => {
+    const historyList = stationModels[stationId] || [];
+    if (historyList.length > 1) {
+      const fallback = historyList[1];
+      setActiveStationModels(prev => ({
+        ...prev,
+        [stationId]: fallback
+      }));
+      tacticalAudio.playAlarm();
+      alert(`Model for station ${stationId} rolled back to ${fallback.modelCard.model_id}.`);
+    } else {
+      // Revert to zero model state (rules only)
+      setActiveStationModels(prev => {
+        const next = { ...prev };
+        delete next[stationId];
+        return next;
+      });
+      tacticalAudio.playAlarm();
+      alert(`Model for station ${stationId} unassigned. Station is running in Rules-Only mode.`);
+    }
   };
 
   return (
@@ -361,7 +476,13 @@ export const WeatherProvider = ({ children }) => {
       injectFault,
       clearFaults,
       adjudicateIncident,
-      rollbackModel
+      rollbackModel,
+      stationModels,
+      activeStationModels,
+      trainStationModel,
+      neighborRadiusKm,
+      setNeighborRadiusKm,
+      spatialEngine
     }}>
       {children}
     </WeatherContext.Provider>

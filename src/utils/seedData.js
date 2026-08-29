@@ -208,108 +208,98 @@ export const INITIAL_QC_CONFIG = {
   extreme_coherence_threshold: 0.75
 };
 
-export const INITIAL_MODEL_REGISTRY = [
-  {
-    id: "iforest-v1.4",
-    name: "Isolation Forest Baseline v1.4",
-    type: "Unsupervised Tree Ensemble",
-    status: "APPROVED & ACTIVE",
-    version: "v1.4.0",
-    approved_at: "2026-08-20 14:30 UTC",
-    approved_by: "Dr. A. Sharma (Lead ML Met)",
-    sha256: "a9f87c2b1e4d081290bb34e89921ef45aa879c2311456d8120eef91104523bb8",
-    purpose: "Unsupervised multi-variable telemetry anomaly detector optimized for rapid physical excursions, stuck values, and progressive sensor calibration drift without discarding legitimate severe storms.",
-    variables: ["Air Temperature (°C)", "Relative Humidity (%)", "Barometric Pressure (hPa)", "Wind Speed (km/h)", "Rainfall Accumulator (mm)"],
-    station_coverage: "Fleet-wide (6/6 AWS Units)",
-    training_period: "2025-06-01 to 2026-06-30 (12-Month Screened Historical Baseline)",
-    normal_data_selection: "Pre-screened with deterministic physical envelopes and expert labels; known hardware failure runs and network outage intervals scrubbed.",
-    features: [
-      "10-min rolling median deviation",
-      "Median Absolute Deviation (MAD) score",
-      "Exponentially weighted residual (alpha=0.3)",
-      "1st & 2nd difference derivative",
-      "Distance-weighted clean peer residual",
-      "Dew-point cross-variable discrepancy index"
-    ],
-    thresholding: "Station-aware dynamic threshold versioned at 99.2th empirical percentile on screened validation splits.",
-    intended_use: "Production real-time inference in Central Cloud Ingestion Pipeline.",
-    known_failure_modes: [
-      "Localized dry microbursts may produce temporary spike alerts prior to spatial neighbor reconciliation.",
-      "Severe nocturnal radiation inversions in mountain basins (handled via spatial elevation adjustment)."
-    ],
-    eval_splits: "Chronological 70% Train / 15% Validation / 15% Holdout Test (No random leakage)",
-    metrics: {
-      event_precision: "94.8%",
-      event_recall: "97.2%",
-      false_alerts_per_day: "0.11 / station-day",
-      detection_delay: "1.2 cycles (3.6 min)",
-      calibration_brier: "0.038",
-      explanation_completeness: "100% (Structured reason codes)"
-    },
-    human_review_policy: "Observations with composite fault_risk >= 0.65 require operator disposition. Adjudications are automatically written to the immutable evaluation label store.",
-    rollback_procedure: "One-click hot rollback to v1.3.8 checksum artifact if false-positive review rate exceeds 5.0% threshold."
-  },
-  {
-    id: "buddy-meta-v2.1",
-    name: "Spatial Buddy Consensus Meta-Model v2.1",
-    type: "Distance-Weighted Robust Estimator",
-    status: "APPROVED & ACTIVE",
-    version: "v2.1.2",
-    approved_at: "2026-08-22 09:15 UTC",
-    approved_by: "Fleet Operations Lead",
-    sha256: "c48209bb8f1a23450912389fedcba901238910452390aef891230194820bcfea",
-    purpose: "Dynamic peer weighting and suspect-peer exclusion engine ensuring bad stations cannot contaminate the fleet reference baseline.",
-    variables: ["Temperature", "Pressure", "Rainfall Rate"],
-    station_coverage: "Cluster-based (Peninsular India, Coastal West, Eastern Hills)",
-    training_period: "Continuous 30-day sliding correlation matrix",
-    normal_data_selection: "Excludes SUSPECT and REJECTED peers from baseline dynamically.",
-    features: ["Inverse-distance weight", "Elevation lapse-rate adjustment", "Historical 30-day inter-station Pearson correlation"],
-    thresholding: "3.0 MAD spatial peer deviation gate",
-    intended_use: "Secondary spatial evidence component in Evidence Fusion Formula.",
-    known_failure_modes: ["Sparse network regions with >100km inter-station gaps (fallback to temporal QC)."],
-    eval_splits: "Cross-validation across station holdouts",
-    metrics: {
-      event_precision: "96.1%",
-      event_recall: "95.4%",
-      false_alerts_per_day: "0.08 / station-day",
-      detection_delay: "1.0 cycles (3.0 min)",
-      calibration_brier: "0.029",
-      explanation_completeness: "100%"
-    },
-    human_review_policy: "Spatial outliers route to Data Quality Analyst queue.",
-    rollback_procedure: "Fallback to equal-weighted nearest-neighbor median."
-  },
-  {
-    id: "lstm-autoenc-v0.9",
-    name: "Temporal LSTM Autoencoder v0.9 (Experimental)",
-    type: "Deep Sequence Autoencoder",
-    status: "STAGING / EVALUATION",
-    version: "v0.9.4",
-    approved_at: "Pending Validation",
-    approved_by: "ML Research Lab",
-    sha256: "77a810f29c018239019284710293847192837401928374019283740192837401",
-    purpose: "Learns complex diurnal micro-climate sequences; evaluated locally offline against simpler baselines.",
-    variables: ["All 7 Standard Meteorological Channels"],
-    station_coverage: "Pilot AWS-07 & AWS-12 only",
-    training_period: "2024-01-01 to 2025-12-31",
-    normal_data_selection: "Heavily screened clean seasonal periods.",
-    features: ["24-step sequence windows (120 minutes) with sinusoidal solar zenith encoding"],
-    thresholding: "Reconstruction Mean Squared Error (MSE) > 0.045",
-    intended_use: "Offline evaluation only (Not yet deployed to edge/cloud pipeline).",
-    known_failure_modes: ["Higher compute footprint; sensitive to missing sequence intervals."],
-    eval_splits: "Chronological holdout",
-    metrics: {
-      event_precision: "91.5%",
-      event_recall: "94.0%",
-      false_alerts_per_day: "0.24 / station-day",
-      detection_delay: "2.0 cycles (6.0 min)",
-      calibration_brier: "0.062",
-      explanation_completeness: "78% (Requires integrated gradients)"
-    },
-    human_review_policy: "Subject to offline fault-injection benchmark pass criteria.",
-    rollback_procedure: "N/A - Non-production"
-  }
-];
+// Benchmark historical datasets simulating distinct station microclimates
+// Used for one-click testing of the Station-Adaptive ML Pipeline
+export const BENCHMARK_HISTORICAL_DATA = {
+  "AWS-07": [
+    // Hyderabad: Semi-arid, higher diurnal temp range, moderate winds, dry season baseline
+    { timestamp: "2026-08-01 00:00:00", temp: 24.2, hum: 78, pres: 1008.2, wind: 10.2, rain: 0.0 },
+    { timestamp: "2026-08-01 02:00:00", temp: 23.5, hum: 81, pres: 1007.8, wind: 9.4, rain: 0.0 },
+    { timestamp: "2026-08-01 04:00:00", temp: 22.8, hum: 84, pres: 1007.4, wind: 8.5, rain: 0.0 },
+    { timestamp: "2026-08-01 06:00:00", temp: 25.1, hum: 76, pres: 1008.5, wind: 11.0, rain: 0.0 },
+    { timestamp: "2026-08-01 08:00:00", temp: 29.4, hum: 62, pres: 1009.2, wind: 14.5, rain: 0.0 },
+    { timestamp: "2026-08-01 10:00:00", temp: 33.2, hum: 48, pres: 1007.9, wind: 16.2, rain: 0.0 },
+    { timestamp: "2026-08-01 12:00:00", temp: 34.8, hum: 42, pres: 1005.8, wind: 18.0, rain: 0.0 },
+    { timestamp: "2026-08-01 14:00:00", temp: 34.2, hum: 44, pres: 1004.9, wind: 16.5, rain: 0.0 },
+    { timestamp: "2026-08-01 16:00:00", temp: 31.9, hum: 55, pres: 1005.7, wind: 14.2, rain: 0.0 },
+    { timestamp: "2026-08-01 18:00:00", temp: 28.5, hum: 66, pres: 1007.1, wind: 12.0, rain: 0.0 },
+    { timestamp: "2026-08-01 20:00:00", temp: 26.3, hum: 72, pres: 1008.0, wind: 10.8, rain: 0.0 },
+    { timestamp: "2026-08-01 22:00:00", temp: 25.0, hum: 75, pres: 1008.4, wind: 9.8, rain: 0.0 },
+    { timestamp: "2026-08-02 00:00:00", temp: 24.0, hum: 79, pres: 1008.1, wind: 9.1, rain: 0.0 },
+    { timestamp: "2026-08-02 02:00:00", temp: 23.2, hum: 82, pres: 1007.5, wind: 8.6, rain: 0.0 },
+    { timestamp: "2026-08-02 04:00:00", temp: 22.5, hum: 85, pres: 1007.1, wind: 8.2, rain: 0.0 },
+    { timestamp: "2026-08-02 06:00:00", temp: 25.0, hum: 75, pres: 1008.3, wind: 10.5, rain: 0.0 },
+    { timestamp: "2026-08-02 08:00:00", temp: 29.8, hum: 60, pres: 1009.0, wind: 14.2, rain: 0.0 },
+    { timestamp: "2026-08-02 10:00:00", temp: 33.6, hum: 46, pres: 1007.6, wind: 16.8, rain: 0.0 },
+    { timestamp: "2026-08-02 12:00:00", temp: 35.1, hum: 40, pres: 1005.5, wind: 18.5, rain: 0.0 },
+    { timestamp: "2026-08-02 14:00:00", temp: 34.5, hum: 42, pres: 1004.8, wind: 17.0, rain: 0.0 },
+    { timestamp: "2026-08-02 16:00:00", temp: 32.1, hum: 52, pres: 1005.4, wind: 14.8, rain: 0.0 },
+    { timestamp: "2026-08-02 18:00:00", temp: 28.7, hum: 64, pres: 1006.8, wind: 12.3, rain: 0.0 },
+    { timestamp: "2026-08-02 20:00:00", temp: 26.5, hum: 70, pres: 1007.8, wind: 11.0, rain: 0.0 },
+    { timestamp: "2026-08-02 22:00:00", temp: 25.1, hum: 74, pres: 1008.2, wind: 10.0, rain: 0.0 },
+    // A corrupted hardware reading to test scrubber
+    { timestamp: "2026-08-02 23:00:00", temp: -999.0, hum: 150, pres: 200.0, wind: -5.0, rain: 0.0 }
+  ],
+  "AWS-12": [
+    // Mumbai Coastal: High humidity maritime air, compressed diurnal temp swing, coastal breeze
+    { timestamp: "2026-08-01 00:00:00", temp: 27.8, hum: 89, pres: 1012.0, wind: 18.2, rain: 2.5 },
+    { timestamp: "2026-08-01 02:00:00", temp: 27.4, hum: 91, pres: 1011.5, wind: 16.8, rain: 1.0 },
+    { timestamp: "2026-08-01 04:00:00", temp: 27.1, hum: 92, pres: 1011.0, wind: 15.4, rain: 0.5 },
+    { timestamp: "2026-08-01 06:00:00", temp: 27.9, hum: 90, pres: 1011.8, wind: 17.5, rain: 1.2 },
+    { timestamp: "2026-08-01 08:00:00", temp: 29.2, hum: 84, pres: 1012.5, wind: 22.0, rain: 0.0 },
+    { timestamp: "2026-08-01 10:00:00", temp: 30.5, hum: 80, pres: 1011.8, wind: 24.5, rain: 0.0 },
+    { timestamp: "2026-08-01 12:00:00", temp: 31.0, hum: 78, pres: 1010.2, wind: 26.0, rain: 0.0 },
+    { timestamp: "2026-08-01 14:00:00", temp: 30.8, hum: 79, pres: 1009.6, wind: 25.2, rain: 0.0 },
+    { timestamp: "2026-08-01 16:00:00", temp: 29.9, hum: 82, pres: 1010.4, wind: 23.0, rain: 0.5 },
+    { timestamp: "2026-08-01 18:00:00", temp: 28.8, hum: 86, pres: 1011.2, wind: 20.4, rain: 1.5 },
+    { timestamp: "2026-08-01 20:00:00", temp: 28.2, hum: 88, pres: 1011.9, wind: 19.0, rain: 2.0 },
+    { timestamp: "2026-08-01 22:00:00", temp: 28.0, hum: 89, pres: 1012.2, wind: 18.5, rain: 1.0 },
+    { timestamp: "2026-08-02 00:00:00", temp: 27.7, hum: 90, pres: 1011.8, wind: 18.0, rain: 1.8 },
+    { timestamp: "2026-08-02 02:00:00", temp: 27.3, hum: 92, pres: 1011.3, wind: 16.5, rain: 2.2 },
+    { timestamp: "2026-08-02 04:00:00", temp: 27.0, hum: 93, pres: 1010.8, wind: 15.0, rain: 3.5 },
+    { timestamp: "2026-08-02 06:00:00", temp: 27.8, hum: 91, pres: 1011.6, wind: 17.2, rain: 1.0 },
+    { timestamp: "2026-08-02 08:00:00", temp: 29.1, hum: 85, pres: 1012.3, wind: 21.8, rain: 0.2 },
+    { timestamp: "2026-08-02 10:00:00", temp: 30.4, hum: 81, pres: 1011.6, wind: 24.1, rain: 0.0 },
+    { timestamp: "2026-08-02 12:00:00", temp: 30.9, hum: 79, pres: 1010.0, wind: 25.8, rain: 0.0 },
+    { timestamp: "2026-08-02 14:00:00", temp: 30.6, hum: 80, pres: 1009.4, wind: 25.0, rain: 0.0 },
+    { timestamp: "2026-08-02 16:00:00", temp: 29.7, hum: 83, pres: 1010.2, wind: 22.8, rain: 1.0 },
+    { timestamp: "2026-08-02 18:00:00", temp: 28.7, hum: 87, pres: 1011.0, wind: 20.1, rain: 2.5 },
+    { timestamp: "2026-08-02 20:00:00", temp: 28.1, hum: 89, pres: 1011.7, wind: 18.8, rain: 1.8 },
+    { timestamp: "2026-08-02 22:00:00", temp: 27.9, hum: 90, pres: 1012.0, wind: 18.2, rain: 0.8 }
+  ],
+  "AWS-19": [
+    // Cherrapunji Hills: High elevation (1313m), heavy orographic rain, lower pressure (870 hPa)
+    { timestamp: "2026-08-01 00:00:00", temp: 19.2, hum: 98, pres: 871.2, wind: 22.5, rain: 24.5 },
+    { timestamp: "2026-08-01 02:00:00", temp: 18.9, hum: 99, pres: 870.8, wind: 24.0, rain: 35.0 },
+    { timestamp: "2026-08-01 04:00:00", temp: 18.5, hum: 99, pres: 870.4, wind: 26.5, rain: 42.0 },
+    { timestamp: "2026-08-01 06:00:00", temp: 19.8, hum: 97, pres: 871.0, wind: 25.0, rain: 28.0 },
+    { timestamp: "2026-08-01 08:00:00", temp: 21.4, hum: 94, pres: 871.8, wind: 20.0, rain: 15.0 },
+    { timestamp: "2026-08-01 10:00:00", temp: 22.8, hum: 90, pres: 871.2, wind: 18.5, rain: 8.5 },
+    { timestamp: "2026-08-01 12:00:00", temp: 23.5, hum: 88, pres: 870.1, wind: 17.0, rain: 6.0 },
+    { timestamp: "2026-08-01 14:00:00", temp: 23.0, hum: 89, pres: 869.5, wind: 19.0, rain: 12.0 },
+    { timestamp: "2026-08-01 16:00:00", temp: 21.8, hum: 93, pres: 870.2, wind: 22.0, rain: 20.0 },
+    { timestamp: "2026-08-01 18:00:00", temp: 20.5, hum: 96, pres: 871.0, wind: 25.0, rain: 38.0 },
+    { timestamp: "2026-08-01 20:00:00", temp: 19.8, hum: 98, pres: 871.5, wind: 28.0, rain: 45.0 },
+    { timestamp: "2026-08-01 22:00:00", temp: 19.4, hum: 99, pres: 871.8, wind: 26.0, rain: 32.0 },
+    { timestamp: "2026-08-02 00:00:00", temp: 19.1, hum: 98, pres: 871.4, wind: 23.0, rain: 22.0 },
+    { timestamp: "2026-08-02 02:00:00", temp: 18.8, hum: 99, pres: 871.0, wind: 25.0, rain: 38.0 },
+    { timestamp: "2026-08-02 04:00:00", temp: 18.4, hum: 99, pres: 870.5, wind: 27.5, rain: 50.0 },
+    { timestamp: "2026-08-02 06:00:00", temp: 19.6, hum: 97, pres: 871.2, wind: 24.5, rain: 30.0 },
+    { timestamp: "2026-08-02 08:00:00", temp: 21.2, hum: 95, pres: 871.9, wind: 21.0, rain: 18.0 },
+    { timestamp: "2026-08-02 10:00:00", temp: 22.6, hum: 91, pres: 871.3, wind: 19.0, rain: 10.0 },
+    { timestamp: "2026-08-02 12:00:00", temp: 23.3, hum: 89, pres: 870.3, wind: 17.5, rain: 7.5 },
+    { timestamp: "2026-08-02 14:00:00", temp: 22.9, hum: 90, pres: 869.7, wind: 20.0, rain: 15.0 },
+    { timestamp: "2026-08-02 16:00:00", temp: 21.6, hum: 94, pres: 870.4, wind: 23.5, rain: 25.0 },
+    { timestamp: "2026-08-02 18:00:00", temp: 20.3, hum: 97, pres: 871.1, wind: 26.5, rain: 40.0 },
+    { timestamp: "2026-08-02 20:00:00", temp: 19.7, hum: 98, pres: 871.6, wind: 29.0, rain: 48.0 },
+    { timestamp: "2026-08-02 22:00:00", temp: 19.3, hum: 99, pres: 871.9, wind: 25.5, rain: 34.0 }
+  ]
+};
+
+// Initial state has ZERO pre-trained models.
+// Models are created, trained, and deployed on-demand when stations upload historical data.
+export const INITIAL_MODEL_REGISTRY = [];
+
 
 export const INITIAL_MODEL_DRIFT = {
   drift_score: 2.1,
