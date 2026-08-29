@@ -429,6 +429,11 @@ export class StationAdaptiveMLPipeline {
       is_anomaly: isAnomaly
     };
   }
+
+  evaluateModel(model, observation, lastObservation = null) {
+    const obs = observation?.sensors || observation || {};
+    return this.scoreRealtimeObservation({ model, observation: obs, lastObservation });
+  }
 }
 
 export const mlPipeline = new StationAdaptiveMLPipeline();
