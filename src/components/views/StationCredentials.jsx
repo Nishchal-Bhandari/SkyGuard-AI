@@ -49,15 +49,29 @@ export const StationCredentials = () => {
             <i className="fa-solid fa-plus"></i> Provision New Station Key
           </button>
         </div>
-        <div className="cyber-card-body" style={{ padding: 0 }}>
-          <div className="tactical-table-wrapper">
-            <table className="tactical-table cred-table">
-              <thead>
-                <tr>
-                  <th>STATION ID</th>
-                  <th>STATION NAME</th>
-                  <th>REGION</th>
-                  <th>USERNAME</th>
+        <div className="cyber-card-body" style={{ padding: stationCredentials.length === 0 ? '40px 20px' : 0 }}>
+          {stationCredentials.length === 0 ? (
+            <div style={{ textAlign: 'center' }}>
+              <i className="fa-solid fa-key" style={{ fontSize: '2.5rem', color: 'var(--neon-cyan)', marginBottom: '12px', opacity: 0.8 }}></i>
+              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+                NO STATION CREDENTIALS PROVISIONED (CLEAN SLATE)
+              </div>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '8px auto 16px auto' }}>
+                Zero station logins exist. Click below to provision a weather station with its geographic coordinates, username, and password.
+              </p>
+              <button className="cyber-btn btn-sm btn-primary" onClick={() => setModalOpen(true)}>
+                <i className="fa-solid fa-plus"></i> Provision First Station Key
+              </button>
+            </div>
+          ) : (
+            <div className="tactical-table-wrapper">
+              <table className="tactical-table cred-table">
+                <thead>
+                  <tr>
+                    <th>STATION ID</th>
+                    <th>STATION NAME</th>
+                    <th>REGION</th>
+                    <th>USERNAME</th>
                   <th>ACCESS KEY</th>
                   <th>STATUS</th>
                   <th>LAST LOGIN</th>
@@ -127,9 +141,10 @@ export const StationCredentials = () => {
                     </tr>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
 

@@ -13,72 +13,11 @@ const SEED_CREDENTIALS = {
       last_login: new Date().toISOString()
     }
   ],
-  stations: [
-    {
-      stationId: "AWS-07",
-      stationName: "Hyderabad Central Met",
-      region: "Telangana South",
-      username: "aws07_op",
-      password: "hyd@2026",
-      status: "ACTIVE",
-      created_at: "2026-08-10T10:00:00Z",
-      last_login: "2026-08-28T14:22:10Z"
-    },
-    {
-      stationId: "AWS-08",
-      stationName: "Secunderabad Cantonment",
-      region: "Telangana South",
-      username: "aws08_op",
-      password: "sec@2026",
-      status: "ACTIVE",
-      created_at: "2026-08-10T10:00:00Z",
-      last_login: "2026-08-28T12:05:40Z"
-    },
-    {
-      stationId: "AWS-09",
-      stationName: "Cyberabad Hitech City",
-      region: "Telangana South",
-      username: "aws09_op",
-      password: "cyber@2026",
-      status: "ACTIVE",
-      created_at: "2026-08-10T10:00:00Z",
-      last_login: "2026-08-28T09:18:15Z"
-    },
-    {
-      stationId: "AWS-12",
-      stationName: "Mumbai Coastal Colaba",
-      region: "Maharashtra West",
-      username: "aws12_op",
-      password: "mum@2026",
-      status: "ACTIVE",
-      created_at: "2026-08-12T11:30:00Z",
-      last_login: "2026-08-27T18:40:00Z"
-    },
-    {
-      stationId: "AWS-13",
-      stationName: "Santacruz Airport Met",
-      region: "Maharashtra West",
-      username: "aws13_op",
-      password: "santa@2026",
-      status: "ACTIVE",
-      created_at: "2026-08-12T11:30:00Z",
-      last_login: "2026-08-28T08:15:30Z"
-    },
-    {
-      stationId: "AWS-19",
-      stationName: "Cherrapunji Hills Eco",
-      region: "Meghalaya East",
-      username: "aws19_op",
-      password: "cherra@2026",
-      status: "ACTIVE",
-      created_at: "2026-08-15T14:00:00Z",
-      last_login: "2026-08-28T15:45:00Z"
-    }
-  ]
+  stations: []
 };
 
-const STORAGE_KEY = "monsoon_sentinel_auth";
-const CREDENTIALS_KEY = "monsoon_sentinel_credentials";
+const STORAGE_KEY = "skyguard_auth_v2";
+const CREDENTIALS_KEY = "skyguard_credentials_v2";
 
 const AuthContext = createContext(null);
 

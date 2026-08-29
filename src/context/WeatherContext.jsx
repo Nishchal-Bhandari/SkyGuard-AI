@@ -41,7 +41,7 @@ export const WeatherProvider = ({ children }) => {
 
   const [activeStationId, setActiveStationId] = useState(() => {
     if (role === 'station_operator' && assignedStationId) return assignedStationId;
-    return 'AWS-07';
+    return null;
   });
 
   const [currentView, setCurrentView] = useState(() => {
@@ -64,6 +64,13 @@ export const WeatherProvider = ({ children }) => {
       }
     }
   }, [role, assignedStationId]);
+
+  // Automatically select first station if none selected
+  useEffect(() => {
+    if (!activeStationId && stations.length > 0) {
+      setActiveStationId(stations[0].id);
+    }
+  }, [stations, activeStationId]);
 
   // Generate initial history
   const [history, setHistory] = useState(() => {
@@ -450,6 +457,48 @@ export const WeatherProvider = ({ children }) => {
     }
   };
 
+  const registerStation = (newStationData) => {
+    setStations(prev => {
+      const existing = prev.find(s => s.id === newStationData.id);
+      if (existing) return prev;
+      const createdStation = {
+        id: newStationData.id,
+        name: newStationData.name || newStationData.id,
+        region: newStationData.region || "Assigned Region",
+        lat: newStationData.lat !== undefined ? parseFloat(newStationData.lat) : 17.3850,
+        lon: newStationData.lon !== undefined ? parseFloat(newStationData.lon) : 78.4867,
+        elevation: newStationData.elevation !== undefined ? parseFloat(newStationData.elevation) : 500,
+        status: "NORMAL",
+        battery: 12.6,
+        signal: -75,
+        uptime_s: 0,
+        firmware: "v1.4.2",
+        last_seen: new Date().toISOString(),
+        sensors: {
+          temperature: { value: 28.5, unit: "°C", quality: "ACCEPTED" },
+          humidity: { value: 65.0, unit: "%", quality: "ACCEPTED" },
+          pressure: { value: 1008.0, unit: "hPa", quality: "ACCEPTED" },
+          wind_speed: { value: 12.0, unit: "km/h", quality: "ACCEPTED" },
+          wind_direction: { value: 200, unit: "deg", quality: "ACCEPTED" },
+          rainfall: { value: 0.0, unit: "mm", quality: "ACCEPTED" },
+          solar: { value: 450.0, unit: "W/m²", quality: "ACCEPTED" }
+        },
+        trusted_peers: []
+      };
+      if (!activeStationId) {
+        setActiveStationId(createdStation.id);
+      }
+      return [...prev, createdStation];
+    });
+  };
+
+  const deleteStation = (stationId) => {
+    setStations(prev => prev.filter(s => s.id !== stationId));
+    if (activeStationId === stationId) {
+      setActiveStationId(null);
+    }
+  };
+
   return (
     <WeatherContext.Provider value={{
       stations,
@@ -480,6 +529,8 @@ export const WeatherProvider = ({ children }) => {
       stationModels,
       activeStationModels,
       trainStationModel,
+      registerStation,
+      deleteStation,
       neighborRadiusKm,
       setNeighborRadiusKm,
       spatialEngine
