@@ -144,11 +144,52 @@ export const WeatherProvider = ({ children }) => {
     }
   }, [stations, activeStationId, role, assignedStationId, isStationOperator]);
 
+  // Helper function to generate realistic undulating historical telemetry
+  const createStationHistory = useCallback((baseTemp = 27.5, baseHum = 70, basePres = 1012, baseWind = 8) => {
+    const points = [];
+    const now = Date.now();
+    for (let i = 24; i >= 0; i--) {
+      const t = new Date(now - i * 30 * 1000);
+      const timeStr = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const tempWave = Math.sin(i / 3.5) * 0.9 + (Math.sin(i * 1.5) * 0.4);
+      const humWave = -Math.sin(i / 3.5) * 3.0 + (Math.cos(i * 1.2) * 1.5);
+      const presWave = Math.cos(i / 4.0) * 0.6;
+      const rainVal = (i === 6 || i === 7) ? +(Math.random() * 2.0 + 1.2).toFixed(1) : 0;
+
+      points.push({
+        time: timeStr,
+        temperature: +(baseTemp + tempWave).toFixed(1),
+        humidity: +Math.min(100, Math.max(20, baseHum + humWave)).toFixed(1),
+        pressure: +(basePres + presWave).toFixed(1),
+        wind_speed: +Math.max(0, baseWind + Math.sin(i) * 2.5).toFixed(1),
+        rainfall: rainVal
+      });
+    }
+    return points;
+  }, []);
+
   // Telemetry History state (Map<stationId, Array<Obs>>)
   const [history, setHistory] = useState(() => {
     const hist = {};
+    const presetTemps = {
+      'AWS-07': 29.5, 'AWS-12': 28.2, 'AWS-19': 22.4, 'AWS-01': 32.0,
+      'AWS-04': 25.8, 'AWS-21': 14.5, 'AWS-15': 27.8, 'AWS-09': 30.1
+    };
     OPEN_METEO_PRESET_STATIONS.forEach(st => {
-      hist[st.id] = [];
+      const bTemp = presetTemps[st.id] || 27.5;
+      hist[st.id] = [
+        ...Array.from({ length: 20 }, (_, i) => {
+          const t = new Date(Date.now() - (20 - i) * 30 * 1000);
+          return {
+            time: t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            temperature: +(bTemp + Math.sin(i / 3.0) * 0.8 + (Math.sin(i) * 0.3)).toFixed(1),
+            humidity: +(65 + Math.cos(i / 3.0) * 4.0).toFixed(1),
+            pressure: +(1012 + Math.cos(i / 4.0) * 0.5).toFixed(1),
+            wind_speed: +(8 + Math.sin(i / 2.0) * 2.0).toFixed(1),
+            rainfall: (i === 12) ? 1.5 : 0
+          };
+        })
+      ];
     });
     return hist;
   });
@@ -591,6 +632,26 @@ export const WeatherProvider = ({ children }) => {
             signal,
             sensors: updatedSensors
           };
+        });
+
+        // Continuously update rolling time-series history
+        setHistory(prevHist => {
+          const nextHist = { ...prevHist };
+          updatedStations.forEach(st => {
+            if (!nextHist[st.id]) nextHist[st.id] = [];
+            const lastEntry = nextHist[st.id][nextHist[st.id].length - 1];
+            if (!lastEntry || lastEntry.time !== nowStr) {
+              nextHist[st.id] = [...nextHist[st.id], {
+                time: nowStr,
+                temperature: st.sensors.temperature.value,
+                humidity: st.sensors.humidity.value,
+                pressure: st.sensors.pressure.value,
+                wind_speed: st.sensors.wind_speed.value,
+                rainfall: st.sensors.rainfall.value
+              }].slice(-30);
+            }
+          });
+          return nextHist;
         });
 
         return updatedStations;
