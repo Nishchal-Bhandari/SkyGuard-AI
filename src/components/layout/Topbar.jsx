@@ -1,5 +1,6 @@
 import React from 'react';
 import { useWeather } from '../../context/WeatherContext';
+import { tacticalAudio } from '../../utils/audio';
 
 const VIEW_TITLES = {
   'command-center': { title: 'FLEET COMMAND OVERVIEW', sub: 'REAL-TIME NETWORK METEOROLOGICAL ANOMALY MATRIX' },
@@ -18,15 +19,21 @@ const VIEW_TITLES = {
 };
 
 export const Topbar = ({ onToggleMobileSidebar }) => {
-  const { currentView, activeStationId } = useWeather();
+  const { currentView, activeStationId, liveApiStatus, syncLiveOpenMeteoData, stations } = useWeather();
   const info = VIEW_TITLES[currentView] || { title: 'SKYGUARD', sub: 'TACTICAL AWS SYSTEM' };
 
   let displayTitle = info.title;
   let displaySub = info.sub;
   if (['station-hud', 'station-upload', 'station-diagnostics', 'station-checklist', 'edge-sync'].includes(currentView)) {
-    displayTitle = `${activeStationId} ${info.title}`;
-    displaySub = `${activeStationId} ${info.sub}`;
+    displayTitle = `${activeStationId || 'AWS'} ${info.title}`;
+    displaySub = `${activeStationId || 'AWS'} ${info.sub}`;
   }
+
+  const handleManualSync = async () => {
+    tacticalAudio.playClick();
+    await syncLiveOpenMeteoData();
+    tacticalAudio.playSuccess();
+  };
 
   return (
     <header className="cyber-topbar">
@@ -45,18 +52,36 @@ export const Topbar = ({ onToggleMobileSidebar }) => {
         </div>
       </div>
 
-      <div className="topbar-right">
-        {/* Live Telemetry Clock & Ticker */}
+      <div className="topbar-right" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {/* Open-Meteo Live API Status Badge */}
         <div className="telemetry-ticker">
-          <div className="ticker-item">
-            <span className="pulse-dot pulse-green"></span>
-            <span style={{ color: 'var(--neon-cyan)' }}>LIVE TELEMETRY:</span>
-            <span id="live-stream-status" style={{ color: '#fff' }}>ACTIVE (QoS 1)</span>
+          <div className="ticker-item" title={liveApiStatus.lastSync ? `Last synced with Open-Meteo at ${liveApiStatus.lastSync}` : 'Open-Meteo Live Data Feed'}>
+            <span className={`pulse-dot ${liveApiStatus.isOnline ? 'pulse-green' : 'pulse-amber'}`}></span>
+            <span style={{ color: 'var(--neon-cyan)', fontWeight: 700 }}>OPEN-METEO API:</span>
+            <span id="live-stream-status" style={{ color: liveApiStatus.isOnline ? '#00ff66' : '#ffb703', fontWeight: 600 }}>
+              {liveApiStatus.isSyncing ? 'SYNCING...' : liveApiStatus.isOnline ? `LIVE (${liveApiStatus.latencyMs}ms)` : 'STANDBY'}
+            </span>
           </div>
-          <div className="ticker-item" style={{ color: 'var(--text-muted)' }}>
-            <i className="fa-solid fa-microchip text-purple"></i> ISOLATION FOREST v1.4
-          </div>
+          {liveApiStatus.lastSync && (
+            <div className="ticker-item" style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>
+              <i className="fa-regular fa-clock text-cyan"></i> {liveApiStatus.lastSync}
+            </div>
+          )}
         </div>
+
+        {/* Instant Sync Trigger Button */}
+        {stations.length > 0 && (
+          <button
+            className="cyber-btn btn-sm"
+            style={{ padding: '5px 10px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '5px', borderColor: 'var(--neon-cyan)' }}
+            onClick={handleManualSync}
+            disabled={liveApiStatus.isSyncing}
+            title="Fetch immediate real-time weather from Open-Meteo API"
+          >
+            <i className={`fa-solid fa-arrows-rotate text-cyan ${liveApiStatus.isSyncing ? 'fa-spin' : ''}`}></i>
+            <span>{liveApiStatus.isSyncing ? 'SYNCING' : 'SYNC LIVE'}</span>
+          </button>
+        )}
       </div>
     </header>
   );

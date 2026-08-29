@@ -215,6 +215,32 @@ export const AuthProvider = ({ children }) => {
     return true;
   };
 
+  const batchRegisterStationCredentials = (presetList) => {
+    setCredentials(prev => {
+      const existingIds = new Set(prev.stations.map(s => s.stationId));
+      const newItems = presetList
+        .filter(p => !existingIds.has(p.id || p.stationId))
+        .map(p => ({
+          stationId: p.id || p.stationId,
+          stationName: p.name || p.stationName,
+          region: p.region || "Assigned Region",
+          lat: p.lat !== undefined ? parseFloat(p.lat) : 18.0,
+          lon: p.lon !== undefined ? parseFloat(p.lon) : 78.0,
+          elevation: p.elevation !== undefined ? parseFloat(p.elevation) : 500,
+          username: (p.username || `operator_${(p.id || 'aws').toLowerCase()}`).trim(),
+          password: p.password || "sentinel2026",
+          status: p.status || "ACTIVE",
+          created_at: new Date().toISOString(),
+          last_login: null
+        }));
+      return {
+        ...prev,
+        stations: [...prev.stations, ...newItems]
+      };
+    });
+    return true;
+  };
+
   return (
     <AuthContext.Provider value={{
       session,
@@ -227,6 +253,7 @@ export const AuthProvider = ({ children }) => {
       login,
       logout,
       createStationCredential,
+      batchRegisterStationCredentials,
       updateStationCredential,
       toggleStationStatus,
       resetStationPassword
