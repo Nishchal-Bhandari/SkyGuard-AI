@@ -3,7 +3,7 @@ import { useWeather } from '../../context/WeatherContext';
 
 export const StationDiagnostics = () => {
   const { stations, activeStationId, setCurrentView } = useWeather();
-  const station = stations.find(s => s.id === activeStationId) || stations[0];
+  const station = stations.find(s => s.id?.toUpperCase() === activeStationId?.toUpperCase()) || stations[0] || {};
 
   if (!station || !station.id) {
     return (
