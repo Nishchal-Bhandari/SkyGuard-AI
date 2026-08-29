@@ -22,6 +22,23 @@ export const StationHUD = () => {
 
   const badgeClass = station.status === 'NORMAL' ? 'badge-normal' : station.status === 'SUSPECT' ? 'badge-suspect' : station.status === 'CRITICAL' ? 'badge-critical' : 'badge-extreme';
 
+  if (!station || !station.id) {
+    return (
+      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <i className="fa-solid fa-satellite-dish" style={{ fontSize: '3rem', color: 'var(--neon-cyan)', marginBottom: '16px', opacity: 0.8 }}></i>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+          NO ACTIVE WEATHER STATION AVAILABLE
+        </div>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
+          All mock data has been purged. Provision a weather station in Station Credentials to stream telemetry and monitor real-time sensor gauges.
+        </p>
+        <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
+          <i className="fa-solid fa-key"></i> Provision Weather Station
+        </button>
+      </div>
+    );
+  }
+
   // Initialize and update Chart.js
   useEffect(() => {
     const stHistory = history[activeStationId] || [];

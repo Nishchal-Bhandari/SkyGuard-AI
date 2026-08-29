@@ -71,60 +71,75 @@ export const CommandCenter = () => {
           </button>
         </div>
         <div className="cyber-card-body" style={{ padding: 0 }}>
-          <div className="tactical-table-wrapper">
-            <table className="tactical-table">
-              <thead>
-                <tr>
-                  <th>STATION ID</th>
-                  <th>LOCATION / REGION</th>
-                  <th>STATUS</th>
-                  <th>DEDICATED MODEL</th>
-                  <th>TEMPERATURE</th>
-                  <th>HUMIDITY</th>
-                  <th>PRESSURE</th>
-                  <th>RAINFALL</th>
-                  <th>ACTIONS</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stations.map(st => {
-                  const badge = st.status === 'NORMAL' ? 'badge-normal' : st.status === 'SUSPECT' ? 'badge-suspect' : st.status === 'CRITICAL' ? 'badge-critical' : 'badge-extreme';
-                  const model = activeStationModels[st.id]?.modelCard;
-                  return (
-                    <tr key={st.id}>
-                      <td style={{ fontWeight: 'bold', color: 'var(--neon-cyan)' }}>{st.id}</td>
-                      <td>
-                        {st.name} <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{st.region}</div>
-                      </td>
-                      <td>
-                        <span className={`cyber-badge ${badge}`} id={`live-status-${st.id}`}>{st.status}</span>
-                      </td>
-                      <td>
-                        {model ? (
-                          <span className="cyber-badge badge-normal" style={{ fontSize: '0.68rem' }}>
-                            {model.model_id}
-                          </span>
-                        ) : (
-                          <span className="cyber-badge badge-offline" style={{ fontSize: '0.68rem' }}>
-                            Rules Only
-                          </span>
-                        )}
-                      </td>
-                      <td id={`live-temp-${st.id}`}>{st.sensors.temperature.value} {st.sensors.temperature.unit}</td>
-                      <td id={`live-hum-${st.id}`}>{st.sensors.humidity.value} {st.sensors.humidity.unit}</td>
-                      <td id={`live-pres-${st.id}`}>{st.sensors.pressure.value} {st.sensors.pressure.unit}</td>
-                      <td id={`live-rain-${st.id}`}>{st.sensors.rainfall.value} {st.sensors.rainfall.unit}</td>
-                      <td>
-                        <button className="cyber-btn btn-sm" onClick={() => handleLaunchHUD(st.id)}>
-                          <i className="fa-solid fa-terminal"></i> Operator HUD
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          {stations.length === 0 ? (
+            <div style={{ padding: '36px 20px', textAlign: 'center', background: 'rgba(5,8,17,0.7)', borderRadius: '4px' }}>
+              <i className="fa-solid fa-tower-broadcast" style={{ fontSize: '2.2rem', color: 'var(--neon-cyan)', marginBottom: '12px', opacity: 0.8 }}></i>
+              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+                NO WEATHER STATIONS PROVISIONED (CLEAN SLATE)
+              </div>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', maxWidth: '520px', margin: '8px auto 16px auto' }}>
+                All mock telemetry and seed data have been cleared. As Administrator, you can provision weather stations with geographic coordinates and credentials.
+              </p>
+              <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
+                <i className="fa-solid fa-key"></i> Open Station Provisioning
+              </button>
+            </div>
+          ) : (
+            <div className="tactical-table-wrapper">
+              <table className="tactical-table">
+                <thead>
+                  <tr>
+                    <th>STATION ID</th>
+                    <th>LOCATION / REGION</th>
+                    <th>STATUS</th>
+                    <th>DEDICATED MODEL</th>
+                    <th>TEMPERATURE</th>
+                    <th>HUMIDITY</th>
+                    <th>PRESSURE</th>
+                    <th>RAINFALL</th>
+                    <th>ACTIONS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stations.map(st => {
+                    const badge = st.status === 'NORMAL' ? 'badge-normal' : st.status === 'SUSPECT' ? 'badge-suspect' : st.status === 'CRITICAL' ? 'badge-critical' : 'badge-extreme';
+                    const model = activeStationModels[st.id]?.modelCard;
+                    return (
+                      <tr key={st.id}>
+                        <td style={{ fontWeight: 'bold', color: 'var(--neon-cyan)' }}>{st.id}</td>
+                        <td>
+                          {st.name} <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{st.region}</div>
+                        </td>
+                        <td>
+                          <span className={`cyber-badge ${badge}`} id={`live-status-${st.id}`}>{st.status}</span>
+                        </td>
+                        <td>
+                          {model ? (
+                            <span className="cyber-badge badge-normal" style={{ fontSize: '0.68rem' }}>
+                              {model.model_id}
+                            </span>
+                          ) : (
+                            <span className="cyber-badge badge-offline" style={{ fontSize: '0.68rem' }}>
+                              Rules Only
+                            </span>
+                          )}
+                        </td>
+                        <td id={`live-temp-${st.id}`}>{st.sensors.temperature.value} {st.sensors.temperature.unit}</td>
+                        <td id={`live-hum-${st.id}`}>{st.sensors.humidity.value} {st.sensors.humidity.unit}</td>
+                        <td id={`live-pres-${st.id}`}>{st.sensors.pressure.value} {st.sensors.pressure.unit}</td>
+                        <td id={`live-rain-${st.id}`}>{st.sensors.rainfall.value} {st.sensors.rainfall.unit}</td>
+                        <td>
+                          <button className="cyber-btn btn-sm" onClick={() => handleLaunchHUD(st.id)}>
+                            <i className="fa-solid fa-terminal"></i> Operator HUD
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </>

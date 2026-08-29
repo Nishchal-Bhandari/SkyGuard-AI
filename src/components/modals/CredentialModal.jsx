@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useWeather } from '../../context/WeatherContext';
 import { tacticalAudio } from '../../utils/audio';
 
 export const CredentialModal = ({ isOpen, onClose }) => {
   const { createStationCredential } = useAuth();
+  const { registerStation } = useWeather();
   const [stationId, setStationId] = useState('');
   const [stationName, setStationName] = useState('');
   const [region, setRegion] = useState('South India');
@@ -32,6 +34,14 @@ export const CredentialModal = ({ isOpen, onClose }) => {
     });
 
     if (res.success) {
+      registerStation({
+        id: stationId,
+        name: stationName,
+        region,
+        lat: parseFloat(lat) || 17.3850,
+        lon: parseFloat(lon) || 78.4867,
+        elevation: parseFloat(elevation) || 500
+      });
       tacticalAudio.playSuccess();
       onClose();
     } else {

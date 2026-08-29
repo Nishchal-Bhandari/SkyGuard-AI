@@ -18,6 +18,23 @@ export const StationUpload = () => {
   const [trainedResult, setTrainedResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
 
+  if (!stations || stations.length === 0) {
+    return (
+      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <i className="fa-solid fa-cloud-arrow-up" style={{ fontSize: '3rem', color: 'var(--neon-cyan)', marginBottom: '16px', opacity: 0.8 }}></i>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+          NO REGISTERED WEATHER STATIONS
+        </div>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
+          All mock stations have been cleared. To train an Isolation Forest model, please provision a weather station first via Station Credentials.
+        </p>
+        <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
+          <i className="fa-solid fa-key"></i> Provision Weather Station
+        </button>
+      </div>
+    );
+  }
+
   const PIPELINE_STEPS = [
     { label: "Data Uploaded", desc: "Raw datalogger frames received" },
     { label: "Data Validated", desc: "Physical plausibility & sanity checks" },
