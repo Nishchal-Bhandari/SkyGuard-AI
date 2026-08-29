@@ -20,7 +20,41 @@ const WeatherContext = createContext(null);
 export const WeatherProvider = ({ children }) => {
   const { session, role, assignedStationId, batchRegisterStationCredentials } = useAuth();
   
-  const [stations, setStations] = useState(() => JSON.parse(JSON.stringify(SEED_STATIONS)));
+  const [stations, setStations] = useState(() => {
+    try {
+      const savedCreds = localStorage.getItem("skyguard_credentials_v2");
+      if (savedCreds) {
+        const parsed = JSON.parse(savedCreds);
+        if (parsed.stations && parsed.stations.length > 0) {
+          return parsed.stations.map(p => ({
+            id: p.stationId,
+            name: p.stationName || p.stationId,
+            region: p.region || "Assigned Region",
+            lat: p.lat !== undefined ? parseFloat(p.lat) : 17.3850,
+            lon: p.lon !== undefined ? parseFloat(p.lon) : 78.4867,
+            elevation: p.elevation !== undefined ? parseFloat(p.elevation) : 500,
+            status: "NORMAL",
+            battery: 12.6,
+            signal: -72,
+            uptime_s: 0,
+            firmware: "v2.1.0-OM",
+            last_seen: new Date().toISOString(),
+            sensors: {
+              temperature: { value: 25.0, unit: "°C", quality: "ACCEPTED" },
+              humidity: { value: 60.0, unit: "%", quality: "ACCEPTED" },
+              pressure: { value: 1012.0, unit: "hPa", quality: "ACCEPTED" },
+              wind_speed: { value: 8.0, unit: "km/h", quality: "ACCEPTED" },
+              wind_direction: { value: 180, unit: "deg", quality: "ACCEPTED" },
+              rainfall: { value: 0.0, unit: "mm", quality: "ACCEPTED" },
+              solar: { value: 500.0, unit: "W/m²", quality: "ACCEPTED" }
+            },
+            trusted_peers: []
+          }));
+        }
+      }
+    } catch (e) {}
+    return JSON.parse(JSON.stringify(SEED_STATIONS));
+  });
   const [incidents, setIncidents] = useState(() => JSON.parse(JSON.stringify(SEED_INCIDENTS)));
   const [qcConfig, setQcConfig] = useState(() => ({ ...INITIAL_QC_CONFIG }));
   const [modelRegistry, setModelRegistry] = useState(() => [...INITIAL_MODEL_REGISTRY]);
