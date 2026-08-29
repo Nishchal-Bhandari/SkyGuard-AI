@@ -1,23 +1,7 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-
-const SEED_CREDENTIALS = {
-  admin: [
-    {
-      id: "admin-01",
-      username: "admin",
-      passwordHash: "sentinel2026",
-      name: "Chief Supervisor",
-      role: "admin",
-      status: "ACTIVE",
-      created_at: "2026-08-01T00:00:00Z",
-      last_login: new Date().toISOString()
-    }
-  ],
-  stations: []
-};
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { apiClient } from '../utils/apiClient';
 
 const STORAGE_KEY = "skyguard_auth_v2";
-const CREDENTIALS_KEY = "skyguard_credentials_v2";
 
 const AuthContext = createContext(null);
 
@@ -25,7 +9,11 @@ export const AuthProvider = ({ children }) => {
   const [session, setSession] = useState(() => {
     try {
       const data = localStorage.getItem(STORAGE_KEY);
-      if (data) return JSON.parse(data);
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (parsed.token) apiClient.setToken(parsed.token);
+        return parsed;
+      }
     } catch (e) {}
     return {
       isAuthenticated: false,
@@ -37,99 +25,98 @@ export const AuthProvider = ({ children }) => {
     };
   });
 
-  const [credentials, setCredentials] = useState(() => {
-    try {
-      const data = localStorage.getItem(CREDENTIALS_KEY);
-      if (data) return JSON.parse(data);
-    } catch (e) {}
-    return JSON.parse(JSON.stringify(SEED_CREDENTIALS));
-  });
+  const [stationCredentials, setStationCredentials] = useState([]);
+  const [isLoadingStations, setIsLoadingStations] = useState(false);
 
+  // Synchronize session to localStorage
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+      if (session.token) {
+        apiClient.setToken(session.token);
+      } else {
+        apiClient.clearToken();
+      }
     } catch (e) {}
   }, [session]);
 
-  useEffect(() => {
+  /**
+   * Fetch all registered station accounts from SQLite database (Admin only)
+   */
+  const refreshStationList = useCallback(async () => {
+    if (session.role !== "admin" || !session.token) return;
+    setIsLoadingStations(true);
     try {
-      localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(credentials));
-    } catch (e) {}
-  }, [credentials]);
+      const list = await apiClient.listStations();
+      const mapped = list.map(s => ({
+        id: s.id,
+        stationId: s.station_id,
+        stationName: s.station_name,
+        username: s.username,
+        region: s.region,
+        lat: s.latitude,
+        lon: s.longitude,
+        elevation: s.elevation,
+        status: s.status,
+        createdBy: s.created_by,
+        created_at: s.created_at,
+        last_login: s.last_login
+      }));
+      setStationCredentials(mapped);
+    } catch (err) {
+      console.warn("[AuthContext] Failed to load stations from SQLite:", err.message);
+    } finally {
+      setIsLoadingStations(false);
+    }
+  }, [session.role, session.token]);
 
+  // Load stations on admin session mount
+  useEffect(() => {
+    if (session.isAuthenticated && session.role === "admin") {
+      refreshStationList();
+    }
+  }, [session.isAuthenticated, session.role, refreshStationList]);
+
+  /**
+   * Database-Backed Authentication Login
+   */
   const login = async (role, username, password) => {
-    await new Promise(resolve => setTimeout(resolve, 400));
-
     if (!username || !password) {
       return { success: false, error: "EMPTY_FIELDS", message: "Please provide both username and password." };
     }
 
-    const cleanUser = username.trim().toLowerCase();
-
-    if (role === "admin") {
-      const adminUser = credentials.admin.find(
-        a => a.username.toLowerCase() === cleanUser && a.passwordHash === password
-      );
-
-      if (!adminUser) {
-        return { success: false, error: "INVALID_CREDENTIALS", message: "Invalid Central Admin username or password." };
+    try {
+      let res;
+      if (role === "admin") {
+        res = await apiClient.loginAdmin(username.trim(), password);
+      } else {
+        res = await apiClient.loginStation(username.trim(), password);
       }
 
-      if (adminUser.status !== "ACTIVE") {
-        return { success: false, error: "ACCOUNT_DEACTIVATED", message: "This Admin account has been deactivated." };
+      if (res.success && res.token) {
+        const newSession = {
+          isAuthenticated: true,
+          user: res.user,
+          role: res.role,
+          assignedStationId: res.user.assignedStationId || null,
+          stationName: res.user.stationName || null,
+          token: res.token
+        };
+        setSession(newSession);
+        return { success: true, role: res.role, user: res.user, token: res.token };
       }
 
-      const updatedCreds = { ...credentials };
-      const matched = updatedCreds.admin.find(a => a.id === adminUser.id);
-      if (matched) matched.last_login = new Date().toISOString();
-      setCredentials(updatedCreds);
-
-      const newSession = {
-        isAuthenticated: true,
-        user: { id: adminUser.id, username: adminUser.username, name: adminUser.name },
-        role: "admin",
-        assignedStationId: null,
-        stationName: null,
-        token: `jwt-admin-${Date.now()}`
-      };
-      setSession(newSession);
-
-      return { success: true, role: "admin", user: newSession.user };
-    } else if (role === "station_operator") {
-      const stationCred = credentials.stations.find(
-        s => s.username.toLowerCase() === cleanUser && s.password === password
-      );
-
-      if (!stationCred) {
-        return { success: false, error: "INVALID_CREDENTIALS", message: "Invalid Station Operator username or password." };
-      }
-
-      if (stationCred.status !== "ACTIVE") {
-        return { success: false, error: "STATION_DEACTIVATED", message: `Access for station ${stationCred.stationId} is currently deactivated by Central Admin.` };
-      }
-
-      const updatedCreds = { ...credentials };
-      const matched = updatedCreds.stations.find(s => s.stationId === stationCred.stationId);
-      if (matched) matched.last_login = new Date().toISOString();
-      setCredentials(updatedCreds);
-
-      const newSession = {
-        isAuthenticated: true,
-        user: { username: stationCred.username, name: `${stationCred.stationId} Operator` },
-        role: "station_operator",
-        assignedStationId: stationCred.stationId,
-        stationName: stationCred.stationName,
-        token: `jwt-station-${stationCred.stationId}-${Date.now()}`
-      };
-      setSession(newSession);
-
-      return { success: true, role: "station_operator", stationId: stationCred.stationId, user: newSession.user };
+      return { success: false, error: "AUTH_FAILED", message: res.message || "Authentication failed." };
+    } catch (err) {
+      return { success: false, error: "API_ERROR", message: err.message || "Authentication service unavailable." };
     }
-
-    return { success: false, error: "INVALID_ROLE", message: "Invalid authentication role specified." };
   };
 
+  /**
+   * Logout and clear token
+   */
   const logout = () => {
+    apiClient.clearToken();
     setSession({
       isAuthenticated: false,
       user: null,
@@ -138,107 +125,91 @@ export const AuthProvider = ({ children }) => {
       stationName: null,
       token: null
     });
+    setStationCredentials([]);
   };
 
-  const createStationCredential = (stationId, stationName, username, password, status = "ACTIVE", locationData = {}) => {
-    const existing = credentials.stations.find(
-      s => s.stationId === stationId || s.username.toLowerCase() === username.toLowerCase().trim()
-    );
-    if (existing) {
-      return { success: false, message: `Credential already exists for station ${stationId} or username '${username}'.` };
-    }
-
-    const newCred = {
-      stationId,
-      stationName,
-      region: locationData.region || "Assigned Region",
-      lat: locationData.lat !== undefined ? parseFloat(locationData.lat) : 18.0,
-      lon: locationData.lon !== undefined ? parseFloat(locationData.lon) : 78.0,
-      elevation: locationData.elevation !== undefined ? parseFloat(locationData.elevation) : 500,
-      username: username.trim(),
-      password,
-      status,
-      created_at: new Date().toISOString(),
-      last_login: null
-    };
-
-    setCredentials(prev => ({
-      ...prev,
-      stations: [...prev.stations, newCred]
-    }));
-    return { success: true, credential: newCred };
-  };
-
-  const updateStationCredential = (stationId, updates) => {
-    setCredentials(prev => ({
-      ...prev,
-      stations: prev.stations.map(s => {
-        if (s.stationId === stationId) {
-          return {
-            ...s,
-            ...(updates.username ? { username: updates.username.trim() } : {}),
-            ...(updates.password ? { password: updates.password } : {}),
-            ...(updates.status ? { status: updates.status } : {})
-          };
-        }
-        return s;
-      })
-    }));
-    return { success: true };
-  };
-
-  const toggleStationStatus = (stationId) => {
-    let newStatus = "ACTIVE";
-    setCredentials(prev => ({
-      ...prev,
-      stations: prev.stations.map(s => {
-        if (s.stationId === stationId) {
-          newStatus = s.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
-          return { ...s, status: newStatus };
-        }
-        return s;
-      })
-    }));
-    return newStatus;
-  };
-
-  const resetStationPassword = (stationId, newPassword) => {
-    setCredentials(prev => ({
-      ...prev,
-      stations: prev.stations.map(s => {
-        if (s.stationId === stationId) {
-          return { ...s, password: newPassword };
-        }
-        return s;
-      })
-    }));
-    return true;
-  };
-
-  const batchRegisterStationCredentials = (presetList) => {
-    setCredentials(prev => {
-      const existingIds = new Set(prev.stations.map(s => s.stationId));
-      const newItems = presetList
-        .filter(p => !existingIds.has(p.id || p.stationId))
-        .map(p => ({
-          stationId: p.id || p.stationId,
-          stationName: p.name || p.stationName,
-          region: p.region || "Assigned Region",
-          lat: p.lat !== undefined ? parseFloat(p.lat) : 18.0,
-          lon: p.lon !== undefined ? parseFloat(p.lon) : 78.0,
-          elevation: p.elevation !== undefined ? parseFloat(p.elevation) : 500,
-          username: (p.username || `operator_${(p.id || 'aws').toLowerCase()}`).trim(),
-          password: p.password || "sentinel2026",
-          status: p.status || "ACTIVE",
-          created_at: new Date().toISOString(),
-          last_login: null
-        }));
-      return {
-        ...prev,
-        stations: [...prev.stations, ...newItems]
+  /**
+   * Provision New Station Account in SQLite Database
+   */
+  const createStationCredential = async (stationId, stationName, username, password, status = "ACTIVE", locationData = {}) => {
+    try {
+      const payload = {
+        stationId: stationId.trim().toUpperCase(),
+        stationName: stationName.trim(),
+        username: username.trim().toLowerCase(),
+        password,
+        lat: locationData.lat !== undefined ? parseFloat(locationData.lat) : 17.3850,
+        lon: locationData.lon !== undefined ? parseFloat(locationData.lon) : 78.4867,
+        elevation: locationData.elevation !== undefined ? parseFloat(locationData.elevation) : 0,
+        region: locationData.region || "Assigned Region",
+        status
       };
-    });
-    return true;
+
+      const created = await apiClient.createStation(payload);
+      await refreshStationList();
+
+      return {
+        success: true,
+        credential: {
+          id: created.id,
+          stationId: created.station_id,
+          stationName: created.station_name,
+          username: created.username,
+          region: created.region,
+          lat: created.latitude,
+          lon: created.longitude,
+          elevation: created.elevation,
+          status: created.status
+        }
+      };
+    } catch (err) {
+      return { success: false, message: err.message };
+    }
+  };
+
+  /**
+   * Batch Register Presets in SQLite Database
+   */
+  const batchRegisterStationCredentials = async (presetList) => {
+    try {
+      await apiClient.batchCreatePresets(presetList);
+      await refreshStationList();
+      return true;
+    } catch (err) {
+      console.warn("[AuthContext] Batch presets error:", err.message);
+      return false;
+    }
+  };
+
+  /**
+   * Toggle Station Terminal Access Status (ACTIVE / INACTIVE) in SQLite
+   */
+  const toggleStationStatus = async (stationId) => {
+    const target = stationCredentials.find(s => s.stationId === stationId);
+    if (!target) return "INACTIVE";
+    const nextStatus = target.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+
+    try {
+      await apiClient.toggleStationStatus(stationId, nextStatus);
+      setStationCredentials(prev => prev.map(s => s.stationId === stationId ? { ...s, status: nextStatus } : s));
+      return nextStatus;
+    } catch (err) {
+      alert(`Failed to update station status: ${err.message}`);
+      return target.status;
+    }
+  };
+
+  /**
+   * Securely Reset Station Operator Passphrase in SQLite (Stores Salted PBKDF2 Hash)
+   */
+  const resetStationPassword = async (stationId, newPassword) => {
+    try {
+      await apiClient.resetStationPassword(stationId, newPassword);
+      return true;
+    } catch (err) {
+      alert(`Failed to reset password: ${err.message}`);
+      return false;
+    }
   };
 
   return (
@@ -249,12 +220,13 @@ export const AuthProvider = ({ children }) => {
       role: session.role,
       assignedStationId: session.assignedStationId,
       stationName: session.stationName,
-      stationCredentials: credentials.stations,
+      stationCredentials,
+      isLoadingStations,
+      refreshStationList,
       login,
       logout,
       createStationCredential,
       batchRegisterStationCredentials,
-      updateStationCredential,
       toggleStationStatus,
       resetStationPassword
     }}>

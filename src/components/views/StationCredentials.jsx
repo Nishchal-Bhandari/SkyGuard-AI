@@ -4,37 +4,27 @@ import { CredentialModal } from '../modals/CredentialModal';
 import { tacticalAudio } from '../../utils/audio';
 
 export const StationCredentials = () => {
-  const { stationCredentials, toggleStationStatus, resetStationPassword } = useAuth();
-  const [revealedPasswords, setRevealedPasswords] = useState({});
+  const { stationCredentials, toggleStationStatus, resetStationPassword, isLoadingStations } = useAuth();
   const [modalOpen, setModalOpen] = useState(false);
 
-  const toggleReveal = (stationId) => {
-    setRevealedPasswords(prev => ({
-      ...prev,
-      [stationId]: !prev[stationId]
-    }));
+  const handleToggleStatus = async (stationId) => {
     tacticalAudio.playClick();
-  };
-
-  const copyPassword = (password) => {
-    navigator.clipboard.writeText(password);
+    await toggleStationStatus(stationId);
     tacticalAudio.playSuccess();
-    alert("Passphrase copied to clipboard.");
   };
 
-  const handleToggleStatus = (stationId) => {
-    toggleStationStatus(stationId);
-    tacticalAudio.playClick();
-  };
-
-  const handleResetPassword = (stationId) => {
-    const newPass = prompt(`Enter new secure passphrase for ${stationId}:`);
+  const handleResetPassword = async (stationId) => {
+    const newPass = prompt(`Enter new secure passphrase for ${stationId} (min 6 characters):`);
     if (newPass && newPass.trim().length >= 6) {
-      resetStationPassword(stationId, newPass.trim());
-      tacticalAudio.playSuccess();
-      alert(`Password for ${stationId} updated successfully.`);
+      tacticalAudio.playClick();
+      const success = await resetStationPassword(stationId, newPass.trim());
+      if (success) {
+        tacticalAudio.playSuccess();
+        alert(`Access passphrase for ${stationId} has been securely updated and hashed in SQLite.`);
+      }
     } else if (newPass) {
       alert("Password must be at least 6 characters long.");
+      tacticalAudio.playAlarm();
     }
   };
 
@@ -50,14 +40,19 @@ export const StationCredentials = () => {
           </button>
         </div>
         <div className="cyber-card-body" style={{ padding: stationCredentials.length === 0 ? '40px 20px' : 0 }}>
-          {stationCredentials.length === 0 ? (
+          {isLoadingStations ? (
+            <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--neon-cyan)' }}>
+              <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: '2rem', marginBottom: '12px' }}></i>
+              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.9rem' }}>QUERYING SQLITE DATABASE...</div>
+            </div>
+          ) : stationCredentials.length === 0 ? (
             <div style={{ textAlign: 'center' }}>
               <i className="fa-solid fa-key" style={{ fontSize: '2.5rem', color: 'var(--neon-cyan)', marginBottom: '12px', opacity: 0.8 }}></i>
               <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
-                NO STATION CREDENTIALS PROVISIONED (CLEAN SLATE)
+                NO STATION ACCOUNTS IN SQLITE
               </div>
               <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '8px auto 16px auto' }}>
-                Zero station logins exist. Click below to provision a weather station with its geographic coordinates, username, and password.
+                Zero station logins exist in the database. Click below to provision a weather station with its geographic coordinates, username, and secure password.
               </p>
               <button className="cyber-btn btn-sm btn-primary" onClick={() => setModalOpen(true)}>
                 <i className="fa-solid fa-plus"></i> Provision First Station Key
@@ -70,44 +65,31 @@ export const StationCredentials = () => {
                   <tr>
                     <th>STATION ID</th>
                     <th>STATION NAME</th>
-                    <th>REGION</th>
+                    <th>REGION & COORDINATES</th>
                     <th>USERNAME</th>
-                  <th>ACCESS KEY</th>
-                  <th>STATUS</th>
-                  <th>LAST LOGIN</th>
-                  <th>ACTIONS</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stationCredentials.map(s => {
-                  const isRevealed = !!revealedPasswords[s.stationId];
-                  return (
+                    <th>SECURITY</th>
+                    <th>STATUS</th>
+                    <th>LAST LOGIN</th>
+                    <th>ACTIONS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stationCredentials.map(s => (
                     <tr key={s.stationId}>
                       <td style={{ fontWeight: 'bold', color: 'var(--neon-cyan)', whiteSpace: 'nowrap' }}>{s.stationId}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{s.stationName}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}><span className="cyber-badge badge-offline" style={{ fontSize: '0.68rem' }}>{s.region}</span></td>
+                      <td style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>{s.stationName}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <span className="cyber-badge badge-offline" style={{ fontSize: '0.68rem' }}>{s.region}</span>
+                        <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                          {s.lat?.toFixed(2)}°N, {s.lon?.toFixed(2)}°E ({s.elevation || 0}m)
+                        </div>
+                      </td>
                       <td style={{ whiteSpace: 'nowrap' }}><code>{s.username}</code></td>
                       <td style={{ whiteSpace: 'nowrap' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: isRevealed ? 'var(--neon-green)' : 'var(--text-muted)' }}>
-                            {isRevealed ? s.password : '••••••••••••'}
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.74rem', color: 'var(--neon-green)' }}>
+                            <i className="fa-solid fa-shield-halved"></i> PBKDF2-SHA256
                           </span>
-                          <button
-                            className="cyber-btn btn-sm"
-                            style={{ padding: '2px 5px', fontSize: '0.62rem' }}
-                            title="Reveal Passphrase"
-                            onClick={() => toggleReveal(s.stationId)}
-                          >
-                            <i className={`fa-solid ${isRevealed ? 'fa-eye-slash' : 'fa-eye'}`}></i>
-                          </button>
-                          <button
-                            className="cyber-btn btn-sm"
-                            style={{ padding: '2px 5px', fontSize: '0.62rem' }}
-                            title="Copy Passphrase"
-                            onClick={() => copyPassword(s.password)}
-                          >
-                            <i className="fa-solid fa-copy"></i>
-                          </button>
                         </div>
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}>
@@ -134,13 +116,12 @@ export const StationCredentials = () => {
                             onClick={() => handleResetPassword(s.stationId)}
                             title="Reset Access Passphrase"
                           >
-                            <i className="fa-solid fa-rotate-right"></i> Reset
+                            <i className="fa-solid fa-rotate-right"></i> Reset Key
                           </button>
                         </div>
                       </td>
                     </tr>
-                  );
-                })}
+                  ))}
                 </tbody>
               </table>
             </div>
