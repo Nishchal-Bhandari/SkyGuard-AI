@@ -1,0 +1,19 @@
+# Auto-detect text files and normalize line endings
+* text=auto eol=lf
+
+# Force specific file types
+*.jsx text eol=lf
+*.js text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.sql text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.db binary merge=ours

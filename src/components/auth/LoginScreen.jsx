@@ -5,8 +5,8 @@ import { tacticalAudio } from '../../utils/audio';
 export const LoginScreen = () => {
   const { login } = useAuth();
   const [activeTab, setActiveTab] = useState('station_operator'); // 'admin' | 'station_operator'
-  const [username, setUsername] = useState('aws07_op');
-  const [password, setPassword] = useState('hyd@2026');
+  const [username, setUsername] = useState('operator_hyd');
+  const [password, setPassword] = useState('sentinel2026');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -18,8 +18,8 @@ export const LoginScreen = () => {
       setUsername('admin');
       setPassword('sentinel2026');
     } else {
-      setUsername('aws07_op');
-      setPassword('hyd@2026');
+      setUsername('operator_hyd');
+      setPassword('sentinel2026');
     }
     tacticalAudio.playSwitch();
   };
@@ -56,8 +56,8 @@ export const LoginScreen = () => {
           <div className="auth-brand-icon">
             <i className="fa-solid fa-shield-halved"></i>
           </div>
-          <div className="auth-title">SKYGUARD</div>
-          <div className="auth-subtitle">AUTOMATED WEATHER QUALITY ASSURANCE & MET-AI TELEMETRY</div>
+          <div className="auth-title">SKYGUARD-AI</div>
+          <div className="auth-subtitle">SQLITE AUTHENTICATED WEATHER QUALITY ASSURANCE & MET-AI TELEMETRY</div>
         </div>
 
         {/* Role Switcher Tabs */}
@@ -84,8 +84,8 @@ export const LoginScreen = () => {
             <i className={activeTab === 'admin' ? "fa-solid fa-lock" : "fa-solid fa-satellite-dish"}></i>
             <span>
               {activeTab === 'admin'
-                ? "CENTRAL COMMAND & FLEET SUPERVISION ACCESS"
-                : "STATION / FIELD OPERATOR TERMINAL ACCESS"}
+                ? "CENTRAL COMMAND & FLEET SUPERVISION ACCESS (SQLITE)"
+                : "STATION / FIELD OPERATOR TERMINAL ACCESS (SQLITE)"}
             </span>
           </div>
 
@@ -93,8 +93,8 @@ export const LoginScreen = () => {
             {/* Username Input */}
             <div className="cyber-input-group">
               <label className="cyber-input-label" htmlFor="auth-username-input">
-                <span>{activeTab === 'admin' ? 'ADMIN IDENTIFIER' : 'STATION OPERATOR USERNAME'}</span>
-                <span style={{ fontSize: '0.65rem', color: 'var(--neon-cyan)' }}>SECURE RBAC</span>
+                <span>{activeTab === 'admin' ? 'ADMIN IDENTIFIER' : 'STATION USERNAME / STATION ID'}</span>
+                <span style={{ fontSize: '0.65rem', color: 'var(--neon-cyan)' }}>SQLITE VERIFIED</span>
               </label>
               <div className="cyber-input-wrapper">
                 <i className={`fa-solid ${activeTab === 'admin' ? 'fa-id-badge' : 'fa-user'} cyber-input-icon`}></i>
@@ -102,7 +102,7 @@ export const LoginScreen = () => {
                   type="text"
                   id="auth-username-input"
                   className="cyber-input"
-                  placeholder={activeTab === 'admin' ? 'admin' : 'e.g. aws07_op'}
+                  placeholder={activeTab === 'admin' ? 'admin' : 'e.g. operator_hyd or AWS-07'}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   autoComplete="username"
@@ -115,12 +115,12 @@ export const LoginScreen = () => {
             <div className="cyber-input-group">
               <label className="cyber-input-label" htmlFor="auth-password-input">
                 <span>ACCESS KEY / PASSPHRASE</span>
-                <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>SHA-256 VERIFIED</span>
+                <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>PBKDF2-SHA256 HASHED</span>
               </label>
               <div className="cyber-input-wrapper">
                 <i className="fa-solid fa-key cyber-input-icon"></i>
                 <input
-                  type={showPassword ? 'text' : 'password'}
+                  type={showPassword ? "text" : "password"}
                   id="auth-password-input"
                   className="cyber-input"
                   placeholder="••••••••••••"
@@ -132,9 +132,8 @@ export const LoginScreen = () => {
                 <button
                   type="button"
                   className="password-toggle-btn"
-                  id="auth-password-toggle"
-                  title="Toggle Password Visibility"
                   onClick={() => setShowPassword(!showPassword)}
+                  title={showPassword ? "Hide Passphrase" : "Show Passphrase"}
                 >
                   <i className={`fa-solid ${showPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
                 </button>
@@ -144,8 +143,8 @@ export const LoginScreen = () => {
             {/* Error Banner */}
             {errorMsg && (
               <div className="auth-error-banner visible" id="auth-error-banner">
-                <i className="fa-solid fa-triangle-exclamation" style={{ marginTop: '2px' }}></i>
-                <span>{errorMsg}</span>
+                <i className="fa-solid fa-triangle-exclamation"></i>
+                <span id="auth-error-text">{errorMsg}</span>
               </div>
             )}
 
@@ -159,7 +158,7 @@ export const LoginScreen = () => {
               {loading ? (
                 <>
                   <i className="fa-solid fa-circle-notch fa-spin"></i>
-                  <span>AUTHENTICATING ACCESS...</span>
+                  <span>AUTHENTICATING AGAINST SQLITE...</span>
                 </>
               ) : (
                 <>
@@ -190,37 +189,37 @@ export const LoginScreen = () => {
                   <button
                     type="button"
                     className="demo-pill"
-                    onClick={() => handleDemoFill('aws07_op', 'hyd@2026')}
+                    onClick={() => handleDemoFill('operator_hyd', 'sentinel2026')}
                   >
                     📡 AWS-07 (Hyderabad)
                   </button>
                   <button
                     type="button"
                     className="demo-pill"
-                    onClick={() => handleDemoFill('aws08_op', 'sec@2026')}
-                  >
-                    📡 AWS-08 (Secunderabad)
-                  </button>
-                  <button
-                    type="button"
-                    className="demo-pill"
-                    onClick={() => handleDemoFill('aws09_op', 'cyber@2026')}
-                  >
-                    📡 AWS-09 (Cyberabad)
-                  </button>
-                  <button
-                    type="button"
-                    className="demo-pill"
-                    onClick={() => handleDemoFill('aws12_op', 'mum@2026')}
+                    onClick={() => handleDemoFill('operator_mum', 'sentinel2026')}
                   >
                     📡 AWS-12 (Mumbai)
                   </button>
                   <button
                     type="button"
                     className="demo-pill"
-                    onClick={() => handleDemoFill('aws19_op', 'cherra@2026')}
+                    onClick={() => handleDemoFill('operator_cherra', 'sentinel2026')}
                   >
                     📡 AWS-19 (Cherrapunji)
+                  </button>
+                  <button
+                    type="button"
+                    className="demo-pill"
+                    onClick={() => handleDemoFill('operator_del', 'sentinel2026')}
+                  >
+                    📡 AWS-01 (Delhi)
+                  </button>
+                  <button
+                    type="button"
+                    className="demo-pill"
+                    onClick={() => handleDemoFill('operator_leh', 'sentinel2026')}
+                  >
+                    📡 AWS-21 (Leh)
                   </button>
                 </>
               )}
