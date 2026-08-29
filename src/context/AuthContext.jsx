@@ -1,12 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { apiClient } from '../utils/apiClient';
 
-<<<<<<< HEAD
 const STORAGE_KEY = "skyguard_auth_v3";
-const CREDENTIALS_KEY = "skyguard_credentials_v3";
-=======
-const STORAGE_KEY = "skyguard_auth_v2";
->>>>>>> origin/main
 
 const AuthContext = createContext(null);
 
