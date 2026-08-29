@@ -4,19 +4,22 @@ import { tacticalAudio } from '../../utils/audio';
 
 export const CommandCenter = () => {
   const {
-    stations,
-    incidents,
+    stations = [],
+    incidents = [],
     setCurrentView,
     setActiveStationId,
-    activeStationModels,
-    liveApiStatus,
+    activeStationModels = {},
+    liveApiStatus = {},
     syncLiveOpenMeteoData
   } = useWeather();
 
-  const normalCount = stations.filter(s => s.status === 'NORMAL').length;
-  const suspectCount = stations.filter(s => s.status === 'SUSPECT' || s.status === 'CRITICAL').length;
-  const extremeCount = stations.filter(s => s.status === 'EXTREME').length;
-  const openIncidents = incidents.filter(i => i.status === 'open').length;
+  const safeStations = Array.isArray(stations) ? stations : [];
+  const safeIncidents = Array.isArray(incidents) ? incidents : [];
+
+  const normalCount = safeStations.filter(s => s?.status === 'NORMAL').length;
+  const suspectCount = safeStations.filter(s => s?.status === 'SUSPECT' || s?.status === 'CRITICAL').length;
+  const extremeCount = safeStations.filter(s => s?.status === 'EXTREME').length;
+  const openIncidents = safeIncidents.filter(i => i?.status === 'open').length;
 
   const handleViewModel = (stationId) => {
     setActiveStationId(stationId);

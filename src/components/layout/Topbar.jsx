@@ -19,7 +19,7 @@ const VIEW_TITLES = {
 };
 
 export const Topbar = ({ onToggleMobileSidebar }) => {
-  const { currentView, activeStationId, liveApiStatus, syncLiveOpenMeteoData, stations } = useWeather();
+  const { currentView, activeStationId, liveApiStatus = {}, syncLiveOpenMeteoData, stations = [] } = useWeather();
   const info = VIEW_TITLES[currentView] || { title: 'SKYGUARD', sub: 'TACTICAL AWS SYSTEM' };
 
   let displayTitle = info.title;
@@ -29,9 +29,16 @@ export const Topbar = ({ onToggleMobileSidebar }) => {
     displaySub = `${activeStationId || 'AWS'} ${info.sub}`;
   }
 
+  const isOnline = liveApiStatus?.isOnline ?? true;
+  const isSyncing = liveApiStatus?.isSyncing ?? false;
+  const latencyMs = liveApiStatus?.latencyMs ?? 0;
+  const lastSync = liveApiStatus?.lastSync ?? null;
+
   const handleManualSync = async () => {
     tacticalAudio.playClick();
-    await syncLiveOpenMeteoData();
+    if (syncLiveOpenMeteoData) {
+      await syncLiveOpenMeteoData();
+    }
     tacticalAudio.playSuccess();
   };
 
@@ -55,31 +62,31 @@ export const Topbar = ({ onToggleMobileSidebar }) => {
       <div className="topbar-right" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         {/* Open-Meteo Live API Status Badge */}
         <div className="telemetry-ticker">
-          <div className="ticker-item" title={liveApiStatus.lastSync ? `Last synced with Open-Meteo at ${liveApiStatus.lastSync}` : 'Open-Meteo Live Data Feed'}>
-            <span className={`pulse-dot ${liveApiStatus.isOnline ? 'pulse-green' : 'pulse-amber'}`}></span>
+          <div className="ticker-item" title={lastSync ? `Last synced with Open-Meteo at ${lastSync}` : 'Open-Meteo Live Data Feed'}>
+            <span className={`pulse-dot ${isOnline ? 'pulse-green' : 'pulse-amber'}`}></span>
             <span style={{ color: 'var(--neon-cyan)', fontWeight: 700 }}>OPEN-METEO API:</span>
-            <span id="live-stream-status" style={{ color: liveApiStatus.isOnline ? '#00ff66' : '#ffb703', fontWeight: 600 }}>
-              {liveApiStatus.isSyncing ? 'SYNCING...' : liveApiStatus.isOnline ? `LIVE (${liveApiStatus.latencyMs}ms)` : 'STANDBY'}
+            <span id="live-stream-status" style={{ color: isOnline ? '#00ff66' : '#ffb703', fontWeight: 600 }}>
+              {isSyncing ? 'SYNCING...' : isOnline ? `LIVE (${latencyMs}ms)` : 'STANDBY'}
             </span>
           </div>
-          {liveApiStatus.lastSync && (
+          {lastSync && (
             <div className="ticker-item" style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>
-              <i className="fa-regular fa-clock text-cyan"></i> {liveApiStatus.lastSync}
+              <i className="fa-regular fa-clock text-cyan"></i> {lastSync}
             </div>
           )}
         </div>
 
         {/* Instant Sync Trigger Button */}
-        {stations.length > 0 && (
+        {(stations && stations.length > 0) && (
           <button
             className="cyber-btn btn-sm"
             style={{ padding: '5px 10px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '5px', borderColor: 'var(--neon-cyan)' }}
             onClick={handleManualSync}
-            disabled={liveApiStatus.isSyncing}
+            disabled={isSyncing}
             title="Fetch immediate real-time weather from Open-Meteo API"
           >
-            <i className={`fa-solid fa-arrows-rotate text-cyan ${liveApiStatus.isSyncing ? 'fa-spin' : ''}`}></i>
-            <span>{liveApiStatus.isSyncing ? 'SYNCING' : 'SYNC LIVE'}</span>
+            <i className={`fa-solid fa-arrows-rotate text-cyan ${isSyncing ? 'fa-spin' : ''}`}></i>
+            <span>{isSyncing ? 'SYNCING' : 'SYNC LIVE'}</span>
           </button>
         )}
       </div>
