@@ -1,11 +1,18 @@
 import React, { useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { useWeather } from '../../context/WeatherContext';
 import { IncidentModal } from '../modals/IncidentModal';
 import { tacticalAudio } from '../../utils/audio';
 
 export const Incidents = () => {
+  const { role, assignedStationId } = useAuth();
   const { incidents } = useWeather();
   const [selectedIncident, setSelectedIncident] = useState(null);
+
+  const isOperator = role === 'station_operator' || role === 'STATION_OPERATOR';
+  const visibleIncidents = isOperator && assignedStationId
+    ? incidents.filter(i => i.station_id === assignedStationId)
+    : incidents;
 
   const handleOpenIncident = (inc) => {
     setSelectedIncident(inc);
@@ -18,9 +25,14 @@ export const Incidents = () => {
         <div className="cyber-card-header">
           <div className="cyber-card-title">
             <i className="fa-solid fa-triangle-exclamation text-crimson"></i> ANOMALY INCIDENT TRIAGE & ADJUDICATION QUEUE
+            {isOperator && assignedStationId && (
+              <span style={{ fontSize: '0.72rem', color: 'var(--neon-cyan)', marginLeft: '10px' }}>
+                ({assignedStationId} OPERATOR SCOPE)
+              </span>
+            )}
           </div>
           <span className="cyber-badge badge-suspect">
-            {incidents.filter(i => i.status === 'open').length} OPEN ALERTS
+            {visibleIncidents.filter(i => i.status === 'open').length} OPEN ALERTS
           </span>
         </div>
         <div className="cyber-card-body" style={{ padding: 0 }}>
@@ -40,7 +52,15 @@ export const Incidents = () => {
                 </tr>
               </thead>
               <tbody>
-                {incidents.map(inc => {
+                {visibleIncidents.length === 0 ? (
+                  <tr>
+                    <td colSpan="9" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '28px' }}>
+                      <i className="fa-solid fa-circle-check text-green" style={{ fontSize: '1.5rem', marginBottom: '8px', display: 'block' }}></i>
+                      No incidents flagged. All weather station telemetry is nominal or no anomalies reported.
+                    </td>
+                  </tr>
+                ) : (
+                  visibleIncidents.map(inc => {
                   const badgeClass = inc.severity === 'critical' || inc.severity === 'high' ? 'badge-critical' : 'badge-suspect';
                   const stateBadge = inc.quality_state === 'GENUINE_EXTREME_CANDIDATE' ? 'badge-extreme' : 'badge-suspect';
                   const statusBadge = inc.status === 'open' ? 'badge-critical' : inc.status === 'acknowledged' ? 'badge-suspect' : 'badge-normal';
@@ -73,7 +93,7 @@ export const Incidents = () => {
                       </td>
                     </tr>
                   );
-                })}
+                }))}
               </tbody>
             </table>
           </div>

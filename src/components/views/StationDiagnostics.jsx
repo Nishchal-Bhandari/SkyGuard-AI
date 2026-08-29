@@ -2,8 +2,25 @@ import React from 'react';
 import { useWeather } from '../../context/WeatherContext';
 
 export const StationDiagnostics = () => {
-  const { stations, activeStationId } = useWeather();
-  const station = stations.find(s => s.id === activeStationId) || stations[0] || {};
+  const { stations, activeStationId, setCurrentView } = useWeather();
+  const station = stations.find(s => s.id === activeStationId) || stations[0];
+
+  if (!station || !station.id) {
+    return (
+      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <i className="fa-solid fa-microchip" style={{ fontSize: '3rem', color: 'var(--neon-cyan)', marginBottom: '16px', opacity: 0.8 }}></i>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+          NO REGISTERED WEATHER STATION
+        </div>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
+          No weather station is active. Provision a station in Station Credentials to inspect hardware telemetry and enclosure health.
+        </p>
+        <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
+          <i className="fa-solid fa-key"></i> Provision Weather Station
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="cyber-card">

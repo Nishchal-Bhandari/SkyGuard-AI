@@ -16,16 +16,21 @@ const SEED_CREDENTIALS = {
   stations: []
 };
 
-const STORAGE_KEY = "skyguard_auth_v2";
-const CREDENTIALS_KEY = "skyguard_credentials_v2";
+const STORAGE_KEY = "skyguard_auth_v3";
+const CREDENTIALS_KEY = "skyguard_credentials_v3";
 
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [session, setSession] = useState(() => {
     try {
+      localStorage.removeItem("skyguard_auth_v2");
+      localStorage.removeItem("skyguard_credentials_v2");
       const data = localStorage.getItem(STORAGE_KEY);
-      if (data) return JSON.parse(data);
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (parsed && parsed.role === 'admin') return parsed;
+      }
     } catch (e) {}
     return {
       isAuthenticated: false,
@@ -40,7 +45,13 @@ export const AuthProvider = ({ children }) => {
   const [credentials, setCredentials] = useState(() => {
     try {
       const data = localStorage.getItem(CREDENTIALS_KEY);
-      if (data) return JSON.parse(data);
+      if (data) {
+        const parsed = JSON.parse(data);
+        return {
+          admin: parsed.admin && parsed.admin.length > 0 ? parsed.admin : SEED_CREDENTIALS.admin,
+          stations: []
+        };
+      }
     } catch (e) {}
     return JSON.parse(JSON.stringify(SEED_CREDENTIALS));
   });
@@ -141,6 +152,10 @@ export const AuthProvider = ({ children }) => {
   };
 
   const createStationCredential = (stationId, stationName, username, password, status = "ACTIVE", locationData = {}) => {
+    if (session.role !== 'admin' && session.role !== 'CENTRAL_ADMIN') {
+      return { success: false, message: "ACCESS DENIED: Only Central Admin can provision station credentials." };
+    }
+
     const existing = credentials.stations.find(
       s => s.stationId === stationId || s.username.toLowerCase() === username.toLowerCase().trim()
     );
@@ -170,6 +185,10 @@ export const AuthProvider = ({ children }) => {
   };
 
   const updateStationCredential = (stationId, updates) => {
+    if (session.role !== 'admin' && session.role !== 'CENTRAL_ADMIN') {
+      return { success: false, message: "ACCESS DENIED: Only Central Admin can update station credentials." };
+    }
+
     setCredentials(prev => ({
       ...prev,
       stations: prev.stations.map(s => {
@@ -188,6 +207,10 @@ export const AuthProvider = ({ children }) => {
   };
 
   const toggleStationStatus = (stationId) => {
+    if (session.role !== 'admin' && session.role !== 'CENTRAL_ADMIN') {
+      return null;
+    }
+
     let newStatus = "ACTIVE";
     setCredentials(prev => ({
       ...prev,
@@ -203,6 +226,10 @@ export const AuthProvider = ({ children }) => {
   };
 
   const resetStationPassword = (stationId, newPassword) => {
+    if (session.role !== 'admin' && session.role !== 'CENTRAL_ADMIN') {
+      return false;
+    }
+
     setCredentials(prev => ({
       ...prev,
       stations: prev.stations.map(s => {

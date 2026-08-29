@@ -4,9 +4,25 @@ import { CredentialModal } from '../modals/CredentialModal';
 import { tacticalAudio } from '../../utils/audio';
 
 export const StationCredentials = () => {
-  const { stationCredentials, toggleStationStatus, resetStationPassword } = useAuth();
+  const { role, stationCredentials, toggleStationStatus, resetStationPassword } = useAuth();
   const [revealedPasswords, setRevealedPasswords] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
+
+  const isAdmin = role === 'admin' || role === 'CENTRAL_ADMIN';
+
+  if (!isAdmin) {
+    return (
+      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <i className="fa-solid fa-lock" style={{ fontSize: '3rem', color: 'var(--neon-crimson)', marginBottom: '16px', opacity: 0.8 }}></i>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-crimson)', fontWeight: 800 }}>
+          ACCESS DENIED — CENTRAL ADMIN PRIVILEGES REQUIRED
+        </div>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
+          Station provisioning and credential management are strictly restricted to Central Admin. Station Operators cannot access fleet credential administration.
+        </p>
+      </div>
+    );
+  }
 
   const toggleReveal = (stationId) => {
     setRevealedPasswords(prev => ({

@@ -10,8 +10,7 @@ export const CommandCenter = () => {
     setActiveStationId,
     activeStationModels,
     liveApiStatus,
-    syncLiveOpenMeteoData,
-    loadPresetFleet
+    syncLiveOpenMeteoData
   } = useWeather();
 
   const normalCount = stations.filter(s => s.status === 'NORMAL').length;
@@ -19,20 +18,15 @@ export const CommandCenter = () => {
   const extremeCount = stations.filter(s => s.status === 'EXTREME').length;
   const openIncidents = incidents.filter(i => i.status === 'open').length;
 
-  const handleLaunchHUD = (stationId) => {
+  const handleViewModel = (stationId) => {
     setActiveStationId(stationId);
-    setCurrentView('station-hud');
+    setCurrentView('model-governance');
   };
 
   const handleSyncNow = async () => {
     tacticalAudio.playClick();
     await syncLiveOpenMeteoData();
     tacticalAudio.playSuccess();
-  };
-
-  const handleLoadFleet = async () => {
-    tacticalAudio.playClick();
-    await loadPresetFleet();
   };
 
   return (
@@ -63,10 +57,10 @@ export const CommandCenter = () => {
             {stations.length === 0 ? (
               <button
                 className="cyber-btn btn-sm btn-primary"
-                onClick={handleLoadFleet}
+                onClick={() => setCurrentView('credentials')}
                 style={{ padding: '7px 14px', fontSize: '0.78rem' }}
               >
-                <i className="fa-solid fa-tower-observation"></i> Load Indian AWS Fleet (8 Real Stations)
+                <i className="fa-solid fa-key"></i> Provision Weather Station
               </button>
             ) : (
               <>
@@ -154,18 +148,16 @@ export const CommandCenter = () => {
                 NO WEATHER STATIONS CONFIGURED
               </div>
               <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', maxWidth: '520px', margin: '8px auto 16px auto' }}>
-                Load the preset Indian AWS fleet (Hyderabad, Mumbai, Cherrapunji, Delhi, Bangalore, Leh, Pune, Kolkata) to immediately stream real-time Open-Meteo weather data.
+                All existing station data has been removed. Click below to provision a weather station with its geographic coordinates to begin real-time telemetry monitoring.
               </p>
               <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
-                <button className="cyber-btn btn-sm btn-primary" onClick={handleLoadFleet}>
-                  <i className="fa-solid fa-tower-observation"></i> Load Real Indian AWS Fleet (8 Stations)
-                </button>
-                <button className="cyber-btn btn-sm" onClick={() => setCurrentView('credentials')}>
-                  <i className="fa-solid fa-key"></i> Provision Custom Station
+                <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
+                  <i className="fa-solid fa-key"></i> Provision Weather Station
                 </button>
               </div>
             </div>
           ) : (
+
             <div className="tactical-table-wrapper">
               <table className="tactical-table">
                 <thead>
@@ -226,8 +218,8 @@ export const CommandCenter = () => {
                         <td id={`live-pres-${st.id}`}>{st.sensors.pressure.value} {st.sensors.pressure.unit}</td>
                         <td id={`live-rain-${st.id}`}>{st.sensors.rainfall.value} {st.sensors.rainfall.unit}</td>
                         <td>
-                          <button className="cyber-btn btn-sm" onClick={() => handleLaunchHUD(st.id)}>
-                            <i className="fa-solid fa-terminal"></i> Operator HUD
+                          <button className="cyber-btn btn-sm" onClick={() => handleViewModel(st.id)}>
+                            <i className="fa-solid fa-brain"></i> Model Profile
                           </button>
                         </td>
                       </tr>

@@ -1,10 +1,16 @@
 import React, { useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { useWeather } from '../../context/WeatherContext';
 import { tacticalAudio } from '../../utils/audio';
 
 export const ModelGovernance = () => {
+  const { role, assignedStationId } = useAuth();
   const { stations, activeStationId, modelRegistry, activeStationModels, rollbackModel, setCurrentView } = useWeather();
-  const [selectedStationId, setSelectedStationId] = useState(activeStationId || 'AWS-07');
+  const isOperator = role === 'station_operator' || role === 'STATION_OPERATOR';
+  const isAdmin = role === 'admin' || role === 'CENTRAL_ADMIN';
+
+  const defaultStation = isOperator && assignedStationId ? assignedStationId : (activeStationId || stations[0]?.id || 'AWS-01');
+  const [selectedStationId, setSelectedStationId] = useState(defaultStation);
 
   const selectedStation = stations.find(s => s.id === selectedStationId) || stations[0] || {};
   const stationModelEntry = activeStationModels[selectedStationId];
@@ -38,6 +44,10 @@ export const ModelGovernance = () => {
     );
   }
 
+  const availableStations = isOperator && assignedStationId
+    ? stations.filter(s => s.id === assignedStationId)
+    : stations;
+
   return (
     <>
       {/* Top Architecture Alert */}
@@ -56,13 +66,14 @@ export const ModelGovernance = () => {
           <select
             className="cyber-input"
             value={selectedStationId}
+            disabled={isOperator}
             onChange={(e) => {
               setSelectedStationId(e.target.value);
               tacticalAudio.playClick();
             }}
             style={{ background: '#050811', padding: '4px 8px', fontSize: '0.78rem' }}
           >
-            {stations.map(st => (
+            {availableStations.map(st => (
               <option key={st.id} value={st.id}>{st.id} ({st.name})</option>
             ))}
           </select>
@@ -81,9 +92,11 @@ export const ModelGovernance = () => {
                 <button className="cyber-btn btn-sm" onClick={() => handleDownloadModelCard(activeModel)}>
                   <i className="fa-solid fa-download"></i> Export Model Card (JSON)
                 </button>
-                <button className="cyber-btn btn-sm btn-danger" onClick={() => rollbackModel(selectedStationId)}>
-                  <i className="fa-solid fa-rotate-left"></i> Rollback Model
-                </button>
+                {isAdmin && (
+                  <button className="cyber-btn btn-sm btn-danger" onClick={() => rollbackModel(selectedStationId)}>
+                    <i className="fa-solid fa-rotate-left"></i> Rollback Model
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -100,14 +113,21 @@ export const ModelGovernance = () => {
               <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', maxWidth: '560px', margin: '8px auto 16px auto' }}>
                 In accordance with the zero-global-model principle, {selectedStation.name} has not inherited an arbitrary national model. It is currently operating securely under <strong>universal deterministic physical QC rules</strong> until historical datalogger logs are ingested.
               </p>
-              <button
-                className="cyber-btn btn-sm btn-primary"
-                onClick={() => setCurrentView('station-upload')}
-              >
-                <i className="fa-solid fa-cloud-arrow-up"></i> Ingest Logs & Train {selectedStation.id} Model
-              </button>
+              {isOperator ? (
+                <button
+                  className="cyber-btn btn-sm btn-primary"
+                  onClick={() => setCurrentView('station-upload')}
+                >
+                  <i className="fa-solid fa-cloud-arrow-up"></i> Ingest Logs & Train {selectedStation.id} Model
+                </button>
+              ) : (
+                <div style={{ fontSize: '0.74rem', color: 'var(--neon-amber)', fontFamily: 'var(--font-mono)' }}>
+                  <i className="fa-solid fa-lock"></i> Training restricted to authorized Station Operator
+                </div>
+              )}
             </div>
           ) : (
+
             /* Calibrated Dedicated Model Card */
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '14px', marginBottom: '14px' }}>

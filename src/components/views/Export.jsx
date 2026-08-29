@@ -1,9 +1,26 @@
 import React from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { useWeather } from '../../context/WeatherContext';
 import { tacticalAudio } from '../../utils/audio';
 
 export const Export = () => {
+  const { role } = useAuth();
   const { stations, incidents } = useWeather();
+  const isAdmin = role === 'admin' || role === 'CENTRAL_ADMIN';
+
+  if (!isAdmin) {
+    return (
+      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <i className="fa-solid fa-lock" style={{ fontSize: '3rem', color: 'var(--neon-crimson)', marginBottom: '16px', opacity: 0.8 }}></i>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-crimson)', fontWeight: 800 }}>
+          ACCESS DENIED — CENTRAL ADMIN PRIVILEGES REQUIRED
+        </div>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
+          Cryptographic ledger and bulk fleet telemetry export are restricted to Central Admin.
+        </p>
+      </div>
+    );
+  }
 
   const exportPayload = {
     system: "SkyGuard",

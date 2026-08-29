@@ -125,6 +125,15 @@ export const Sidebar = ({ collapsed, setCollapsed }) => {
               <span>Model Governance</span>
             </a>
             <a
+              className={`nav-item ${currentView === 'station-upload' ? 'active' : ''}`}
+              data-view="station-upload"
+              onClick={() => handleNavClick('station-upload')}
+              title="Training Studio (Audit)"
+            >
+              <i className="fa-solid fa-microchip"></i>
+              <span>Training Studio (Audit)</span>
+            </a>
+            <a
               className={`nav-item ${currentView === 'export' ? 'active' : ''}`}
               data-view="export"
               onClick={() => handleNavClick('export')}
@@ -150,10 +159,10 @@ export const Sidebar = ({ collapsed, setCollapsed }) => {
               className={`nav-item ${currentView === 'station-upload' ? 'active' : ''}`}
               data-view="station-upload"
               onClick={() => handleNavClick('station-upload')}
-              title="Historical Data Ingest"
+              title="Historical Data Ingest & ML Training"
             >
               <i className="fa-solid fa-file-arrow-up"></i>
-              <span>Historical Data Ingest</span>
+              <span>Historical Ingest & ML</span>
             </a>
             <a
               className={`nav-item ${currentView === 'station-diagnostics' ? 'active' : ''}`}
@@ -182,6 +191,45 @@ export const Sidebar = ({ collapsed, setCollapsed }) => {
               <i className="fa-solid fa-cloud-arrow-up"></i>
               <span>Edge Buffer & Sync</span>
               {offlineBuffer.length > 0 && <span className="nav-badge">{offlineBuffer.length}</span>}
+            </a>
+
+            <div className="nav-section-title">Station Triage & Health</div>
+            <a
+              className={`nav-item ${currentView === 'incidents' ? 'active' : ''}`}
+              data-view="incidents"
+              onClick={() => handleNavClick('incidents')}
+              title="Incident Triage"
+            >
+              <i className="fa-solid fa-triangle-exclamation"></i>
+              <span>Incident Triage</span>
+              {openIncidentsCount > 0 && <span className="nav-badge">{openIncidentsCount}</span>}
+            </a>
+            <a
+              className={`nav-item ${currentView === 'fault-lab' ? 'active' : ''}`}
+              data-view="fault-lab"
+              onClick={() => handleNavClick('fault-lab')}
+              title="Fault Lab"
+            >
+              <i className="fa-solid fa-vial-virus"></i>
+              <span>Fault Lab</span>
+            </a>
+            <a
+              className={`nav-item ${currentView === 'model-governance' ? 'active' : ''}`}
+              data-view="model-governance"
+              onClick={() => handleNavClick('model-governance')}
+              title="Model Governance"
+            >
+              <i className="fa-solid fa-brain"></i>
+              <span>Model Governance</span>
+            </a>
+            <a
+              className={`nav-item ${currentView === 'fleet-map' ? 'active' : ''}`}
+              data-view="fleet-map"
+              onClick={() => handleNavClick('fleet-map')}
+              title="Fleet Radar Map"
+            >
+              <i className="fa-solid fa-map-location-dot"></i>
+              <span>Fleet Radar Map</span>
             </a>
           </>
         )}

@@ -1,10 +1,31 @@
 import React from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { useWeather } from '../../context/WeatherContext';
 
 export const FaultLab = () => {
-  const { injectFault, clearFaults, stations } = useWeather();
+  const { role, assignedStationId } = useAuth();
+  const { injectFault, clearFaults, stations, setCurrentView } = useWeather();
 
-  const targetStation = stations[0]?.id || "AWS-07";
+  if (!stations || stations.length === 0) {
+    return (
+      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <i className="fa-solid fa-vial-virus" style={{ fontSize: '3rem', color: 'var(--neon-amber)', marginBottom: '16px', opacity: 0.8 }}></i>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-amber)', fontWeight: 800 }}>
+          NO REGISTERED WEATHER STATIONS FOR FAULT INJECTION
+        </div>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
+          All mock stations have been removed. Provision a weather station first via Station Credentials to inject synthetic faults.
+        </p>
+        <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
+          <i className="fa-solid fa-key"></i> Provision Weather Station
+        </button>
+      </div>
+    );
+  }
+
+  const targetStation = (role === 'station_operator' && assignedStationId)
+    ? assignedStationId
+    : stations[0].id;
 
   return (
     <div className="cyber-card">
@@ -45,8 +66,8 @@ export const FaultLab = () => {
             <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
               Progressively biases temperature by +0.4°C per cycle to test the ML anomaly detector on slow creep failures.
             </p>
-            <button className="cyber-btn btn-sm btn-amber" onClick={() => injectFault('AWS-08', 'DRIFT')}>
-              Inject Progressive Drift (AWS-08)
+            <button className="cyber-btn btn-sm btn-amber" onClick={() => injectFault(targetStation, 'DRIFT')}>
+              Inject Progressive Drift ({targetStation})
             </button>
           </div>
 
@@ -59,8 +80,8 @@ export const FaultLab = () => {
             <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
               Locks sensor output invariant to simulate frozen analog-to-digital converter (ADC) or stuck datalogger buffer.
             </p>
-            <button className="cyber-btn btn-sm btn-primary" onClick={() => injectFault('AWS-09', 'FLATLINE')}>
-              Inject Flatline (AWS-09)
+            <button className="cyber-btn btn-sm btn-primary" onClick={() => injectFault(targetStation, 'FLATLINE')}>
+              Inject Flatline ({targetStation})
             </button>
           </div>
 
@@ -73,8 +94,8 @@ export const FaultLab = () => {
             <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
               Drops supply voltage to 10.8V and degrades cellular signal to verify hardware health risk scoring.
             </p>
-            <button className="cyber-btn btn-sm btn-danger" onClick={() => injectFault('AWS-12', 'POWER')}>
-              Inject Battery Drop (AWS-12)
+            <button className="cyber-btn btn-sm btn-danger" onClick={() => injectFault(targetStation, 'POWER')}>
+              Inject Battery Drop ({targetStation})
             </button>
           </div>
 
@@ -85,10 +106,10 @@ export const FaultLab = () => {
               <span className="cyber-badge badge-extreme">GENUINE EXTREME</span>
             </div>
             <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-              Simulates synchronized high rainfall (&gt;30mm), wind gusts (&gt;35km/h), and pressure dip on AWS-19 to test the Multi-Sensor Weather Coherence Gate.
+              Simulates synchronized high rainfall (&gt;30mm), wind gusts (&gt;35km/h), and pressure dip on {targetStation} to test the Multi-Sensor Weather Coherence Gate.
             </p>
-            <button className="cyber-btn btn-sm btn-green" onClick={() => injectFault('AWS-19', 'STORM')}>
-              Trigger Severe Storm Event (AWS-19)
+            <button className="cyber-btn btn-sm btn-green" onClick={() => injectFault(targetStation, 'STORM')}>
+              Trigger Severe Storm Event ({targetStation})
             </button>
           </div>
         </div>

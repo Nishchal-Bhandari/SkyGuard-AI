@@ -3,8 +3,25 @@ import { useWeather } from '../../context/WeatherContext';
 import { tacticalAudio } from '../../utils/audio';
 
 export const StationChecklist = () => {
-  const { checklists, updateChecklist, activeStationId } = useWeather();
-  const stationTasks = checklists[activeStationId] || checklists["AWS-07"] || [];
+  const { checklists, updateChecklist, activeStationId, setCurrentView } = useWeather();
+  const stationTasks = checklists[activeStationId] || [];
+
+  if (!activeStationId || stationTasks.length === 0) {
+    return (
+      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <i className="fa-solid fa-list-check" style={{ fontSize: '3rem', color: 'var(--neon-cyan)', marginBottom: '16px', opacity: 0.8 }}></i>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+          NO ACTIVE STATION PROTOCOL
+        </div>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
+          No weather station is active. Provision a weather station in Station Credentials to access field calibration checklists.
+        </p>
+        <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
+          <i className="fa-solid fa-key"></i> Provision Weather Station
+        </button>
+      </div>
+    );
+  }
 
   const handleSignAudit = () => {
     tacticalAudio.playSuccess();
