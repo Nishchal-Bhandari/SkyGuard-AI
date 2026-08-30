@@ -16,24 +16,14 @@ export const FleetMap = () => {
 
   const targetStation = stations.find(s => s.id === activeStationId) || stations[0];
 
-  if (!stations || stations.length === 0) {
-    return (
-      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
-        <i className="fa-solid fa-map-location-dot" style={{ fontSize: '3rem', color: 'var(--neon-cyan)', marginBottom: '16px', opacity: 0.8 }}></i>
-        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
-          NO REGISTERED WEATHER STATIONS ON RADAR
-        </div>
-        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
-          All mock stations have been removed. Provision a weather station in Station Credentials to display geographic coordinates and spatial neighborhood vectors.
-        </p>
-        <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
-          <i className="fa-solid fa-key"></i> Provision Weather Station
-        </button>
-      </div>
-    );
-  }
-
   useEffect(() => {
+    if (!stations || stations.length === 0) {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+      return;
+    }
     if (!mapContainerRef.current) return;
 
     if (!mapInstanceRef.current) {
@@ -171,10 +161,40 @@ export const FleetMap = () => {
       });
     }
 
-    setTimeout(() => {
-      map.invalidateSize();
+    const timer = setTimeout(() => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.invalidateSize();
+      }
     }, 150);
+
+    return () => clearTimeout(timer);
   }, [stations, activeStationId, neighborRadiusKm, targetStation]);
+
+  useEffect(() => {
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, []);
+
+  if (!stations || stations.length === 0) {
+    return (
+      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <i className="fa-solid fa-map-location-dot" style={{ fontSize: '3rem', color: 'var(--neon-cyan)', marginBottom: '16px', opacity: 0.8 }}></i>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+          NO REGISTERED WEATHER STATIONS ON RADAR
+        </div>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
+          All mock stations have been removed. Provision a weather station in Station Credentials to display geographic coordinates and spatial neighborhood vectors.
+        </p>
+        <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
+          <i className="fa-solid fa-key"></i> Provision Weather Station
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="cyber-card">

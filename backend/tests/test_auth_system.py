@@ -28,19 +28,53 @@ class TestSkyGuardAuthSystem(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         init_db()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM stations WHERE station_id = ?", ("AWS-88",))
+            pwd_hash = hash_password("sentinel2026")
+            now_iso = "2026-08-01T00:00:00Z"
+            test_stations = [
+                ("AWS-07", "Hyderabad Deccan Plateau", "operator_hyd"),
+                ("AWS-12", "Mumbai Coastal Radar", "operator_mum"),
+                ("AWS-19", "Cherrapunji Hill Observatory", "operator_cherra"),
+                ("AWS-04", "Bengaluru Tech Plateau", "operator_blr"),
+                ("AWS-21", "Leh High-Altitude Base", "operator_leh"),
+                ("AWS-15", "Pune Western Ghats Inflow", "operator_pune"),
+                ("AWS-09", "Kolkata Delta Marine", "operator_kol"),
+            ]
+            for st_id, st_name, uname in test_stations:
+                cur.execute("SELECT id FROM stations WHERE station_id = ?", (st_id,))
+                if not cur.fetchone():
+                    cur.execute("""
+                        INSERT INTO stations (station_id, station_name, username, password_hash, access_key, latitude, longitude, elevation, region, status, created_by, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, 'sentinel2026', 17.0, 78.0, 500, 'Test Region', 'ACTIVE', 'test', ?, ?)
+                    """, (st_id, st_name, uname, pwd_hash, now_iso, now_iso))
+                else:
+                    cur.execute("""
+                        UPDATE stations SET username = ?, password_hash = ?, status = 'ACTIVE' WHERE station_id = ?
+                    """, (uname, pwd_hash, st_id))
 
     @classmethod
     def tearDownClass(cls):
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM stations WHERE station_id IN ('AWS-88', 'AWS-07', 'AWS-12', 'AWS-19', 'AWS-04', 'AWS-21', 'AWS-15', 'AWS-09')")
+        except Exception:
+            pass
         try:
             os.remove(temp_db_path)
         except Exception:
             pass
 
     def test_01_database_and_admin_initialization(self):
-        """Test SQLite schema initialization, admin, and fleet auto-seeding"""
+        from backend.app.config import IS_POSTGRES
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            if IS_POSTGRES:
+                cursor.execute("SELECT table_name as name FROM information_schema.tables WHERE table_schema='public';")
+            else:
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
             tables = [row["name"] for row in cursor.fetchall()]
             self.assertIn("admins", tables)
             self.assertIn("stations", tables)

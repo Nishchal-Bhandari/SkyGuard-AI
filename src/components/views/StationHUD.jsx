@@ -1,17 +1,56 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useWeather } from '../../context/WeatherContext';
 import { useAuth } from '../../context/AuthContext';
 import { Chart } from 'chart.js/auto';
+import { apiClient } from '../../utils/apiClient';
 
 export const StationHUD = () => {
-  const { stations, activeStationId, history, activeStationModels, setCurrentView, setActiveStationId, neighborRadiusKm, setNeighborRadiusKm } = useWeather();
-  const { assignedStationId } = useAuth();
+  const { stations, activeStationId, history, activeStationModels, setCurrentView, setActiveStationId } = useWeather();
+  const { assignedStationId, role } = useAuth();
+  const [inspectedPeerId, setInspectedPeerId] = React.useState(null);
+  const [stationQC, setStationQC] = useState(null);
 
-  const station = stations.find(s => s.id?.toUpperCase() === activeStationId?.toUpperCase())
+  // Fetch station-specific QC envelope from backend (P01/P99 calibration)
+  useEffect(() => {
+    let isMounted = true;
+    const stId = activeStationId || assignedStationId;
+    if (!stId) return;
+    apiClient.getStationQC(stId)
+      .then(res => { if (isMounted && res?.has_config) setStationQC(res.config); })
+      .catch(() => {});
+    return () => { isMounted = false; };
+  }, [activeStationId, assignedStationId]);
+
+  const primaryStation = stations.find(s => s.id?.toUpperCase() === activeStationId?.toUpperCase())
     || stations.find(s => s.id?.toUpperCase() === assignedStationId?.toUpperCase())
     || stations[0]
     || {};
-  const activeModel = activeStationModels[activeStationId];
+
+  let station = primaryStation;
+  const isInspectingPeer = !!inspectedPeerId;
+  
+  if (isInspectingPeer && primaryStation.spatial_data?.nearby_stations) {
+      const peerData = primaryStation.spatial_data.nearby_stations.find(p => p.id === inspectedPeerId);
+      if (peerData) {
+          station = {
+              ...primaryStation, // Inherit missing structure
+              ...peerData,       // Override with actual peer data
+              id: peerData.id,
+              name: peerData.name,
+              status: peerData.status,
+              sensors: {
+                  ...primaryStation.sensors,
+                  temperature: { value: peerData.temp, unit: "°C" },
+                  humidity: { value: peerData.hum, unit: "%" }
+              },
+              spatial_data: {}, // Hide peer's peers
+              ml_model: null,
+              final_assessment: null
+          };
+      }
+  }
+
+  const activeModel = isInspectingPeer ? null : activeStationModels[activeStationId];
   const mlResult = station.ml_model;
   const spatialData = station.spatial_data;
   const finalAssessment = station.final_assessment;
@@ -28,25 +67,19 @@ export const StationHUD = () => {
 
   const badgeClass = station.status === 'NORMAL' ? 'badge-normal' : station.status === 'SUSPECT' ? 'badge-suspect' : station.status === 'CRITICAL' ? 'badge-critical' : 'badge-extreme';
 
-  if (!station || !station.id) {
-    return (
-      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
-        <i className="fa-solid fa-satellite-dish" style={{ fontSize: '3rem', color: 'var(--neon-cyan)', marginBottom: '16px', opacity: 0.8 }}></i>
-        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
-          NO ACTIVE WEATHER STATION AVAILABLE
-        </div>
-        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
-          All mock data has been purged. Provision a weather station in Station Credentials to stream telemetry and monitor real-time sensor gauges.
-        </p>
-        <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
-          <i className="fa-solid fa-key"></i> Provision Weather Station
-        </button>
-      </div>
-    );
-  }
-
   // Initialize and update Chart.js
   useEffect(() => {
+    if (!station || !station.id) {
+      if (trendChartInstanceRef.current) {
+        trendChartInstanceRef.current.destroy();
+        trendChartInstanceRef.current = null;
+      }
+      if (peerChartInstanceRef.current) {
+        peerChartInstanceRef.current.destroy();
+        peerChartInstanceRef.current = null;
+      }
+      return;
+    }
     const stHistory = history[activeStationId] || [];
     const labels = stHistory.map(h => h.time);
     const temps = stHistory.map(h => h.temperature);
@@ -224,8 +257,35 @@ export const StationHUD = () => {
     };
   }, [activeStationId]);
 
+  if (!station || !station.id) {
+    return (
+      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <i className="fa-solid fa-satellite-dish" style={{ fontSize: '3rem', color: 'var(--neon-cyan)', marginBottom: '16px', opacity: 0.8 }}></i>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+          NO ACTIVE WEATHER STATION AVAILABLE
+        </div>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '12px auto 20px auto' }}>
+          All mock data has been purged. Provision a weather station in Station Credentials to stream telemetry and monitor real-time sensor gauges.
+        </p>
+        <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
+          <i className="fa-solid fa-key"></i> Provision Weather Station
+        </button>
+      </div>
+    );
+  }
+
   return (
     <>
+      {isInspectingPeer && (
+        <div style={{ background: 'rgba(168, 85, 247, 0.15)', border: '1px solid var(--neon-purple)', padding: '8px 12px', borderRadius: '6px', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ color: 'var(--neon-purple)', fontFamily: 'var(--font-tactical)', fontSize: '0.85rem' }}>
+            <i className="fa-solid fa-eye"></i> READ-ONLY PEER INSPECTION MODE ({station.id})
+          </div>
+          <button className="cyber-btn btn-sm" onClick={() => setInspectedPeerId(null)}>
+            Return to {primaryStation.id}
+          </button>
+        </div>
+      )}
       {/* Station Profile & Dedicated Model Identity Banner */}
       <div style={{ background: 'rgba(10,15,29,0.85)', padding: '14px 18px', border: '1px solid var(--border-subtle)', borderRadius: '6px', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
@@ -262,7 +322,7 @@ export const StationHUD = () => {
             )}
           </div>
           {!activeModel ? (
-            <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('station-upload')} style={{ fontSize: '0.68rem', padding: '4px 8px' }}>
+            <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('station-upload')} style={{ fontSize: '0.68rem', padding: '4px 8px' }} disabled={isInspectingPeer}>
               <i className="fa-solid fa-brain"></i> Train Model
             </button>
           ) : (
@@ -292,7 +352,12 @@ export const StationHUD = () => {
               <span className="gauge-unit">°C</span>
             </div>
           </div>
-          <div className="gauge-subtext">Physical Bound: [-20°C, 55°C]</div>
+          <div className="gauge-subtext">
+            {stationQC
+              ? `Normal Envelope: ${stationQC.temperature_normal_min}°C – ${stationQC.temperature_normal_max}°C`
+              : 'Physical Limit: -50°C – 60°C'
+            }
+          </div>
         </div>
 
         <div className="cyber-card cyber-gauge-card">
@@ -313,7 +378,7 @@ export const StationHUD = () => {
               <span className="gauge-unit">%</span>
             </div>
           </div>
-          <div className="gauge-subtext">Dew Point Plausibility: Valid</div>
+          <div className="gauge-subtext">Operating Range: 0% – 100%</div>
         </div>
 
         <div className="cyber-card cyber-gauge-card">
@@ -334,7 +399,7 @@ export const StationHUD = () => {
               <span className="gauge-unit">hPa</span>
             </div>
           </div>
-          <div className="gauge-subtext">Sea Level Normalized</div>
+          <div className="gauge-subtext">Atmospheric Pressure</div>
         </div>
 
         <div className="cyber-card cyber-gauge-card">
@@ -355,7 +420,7 @@ export const StationHUD = () => {
               <span className="gauge-unit">mm</span>
             </div>
           </div>
-          <div className="gauge-subtext">Tipping Bucket Monotonic</div>
+          <div className="gauge-subtext">Hourly Accumulation</div>
         </div>
       </div>
 
@@ -382,42 +447,22 @@ export const StationHUD = () => {
       </div>
 
       {/* Nearby Station Spatial Intelligence & Neighborhood Consensus Panel */}
-      <div className="cyber-card" style={{ marginTop: '16px' }}>
-        <div className="cyber-card-header" style={{ flexWrap: 'wrap', gap: '10px' }}>
-          <div className="cyber-card-title">
-            <i className="fa-solid fa-satellite-dish text-cyan"></i> NEARBY STATION SPATIAL INTELLIGENCE & NEIGHBORHOOD RADAR
-          </div>
+      {!isInspectingPeer && (
+        <div className="cyber-card" style={{ marginTop: '16px' }}>
+          <div className="cyber-card-header" style={{ flexWrap: 'wrap', gap: '10px' }}>
+            <div className="cyber-card-title">
+              <i className="fa-solid fa-satellite-dish text-cyan"></i> NEARBY STATION SPATIAL INTELLIGENCE & NEIGHBORHOOD RADAR
+            </div>
 
-          {/* Configurable Search Radius Control */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-              SEARCH RADIUS: <strong style={{ color: 'var(--neon-cyan)' }}>{neighborRadiusKm} km</strong>
-            </span>
-            <input
-              type="range"
-              min="10"
-              max="200"
-              step="5"
-              value={neighborRadiusKm}
-              onChange={(e) => setNeighborRadiusKm(Number(e.target.value))}
-              style={{ cursor: 'pointer', accentColor: 'var(--neon-cyan)' }}
-            />
-            <div style={{ display: 'flex', gap: '4px' }}>
-              {[15, 50, 100].map(r => (
-                <button
-                  key={r}
-                  className={`cyber-btn btn-sm ${neighborRadiusKm === r ? 'btn-primary' : ''}`}
-                  style={{ fontSize: '0.65rem', padding: '2px 6px' }}
-                  onClick={() => setNeighborRadiusKm(r)}
-                >
-                  {r}km
-                </button>
-              ))}
+            {/* Configurable Search Radius Control */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                SEARCH RADIUS: <strong style={{ color: 'var(--neon-cyan)' }}>{spatialData?.search_radius_km ?? 60} km</strong>
+              </span>
             </div>
           </div>
-        </div>
 
-        <div className="cyber-card-body">
+          <div className="cyber-card-body">
           {/* Dual-Track Anomaly Fusion Summary Banner */}
           <div style={{ background: 'rgba(5,8,17,0.75)', border: '1px solid var(--border-subtle)', borderRadius: '6px', padding: '14px', marginBottom: '14px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '10px', marginBottom: '10px' }}>
@@ -444,7 +489,7 @@ export const StationHUD = () => {
               <div style={{ background: 'rgba(10,15,29,0.6)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>ELIGIBLE PEERS IN RADIUS</div>
                 <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.05rem', color: 'var(--neon-cyan)', fontWeight: 'bold' }}>
-                  {spatialData?.nearby_stations?.length ?? 0} <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>/ {stations.length - 1} fleet</span>
+                  {spatialData?.eligible_peer_count ?? 0} <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>/ {spatialData?.fleet_station_count ?? 0} Fleet</span>
                 </div>
               </div>
 
@@ -465,7 +510,7 @@ export const StationHUD = () => {
               <div style={{ background: 'rgba(10,15,29,0.6)', padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>LOCAL ML ANOMALY SCORE</div>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', color: mlResult?.is_anomaly ? 'var(--neon-crimson)' : 'var(--neon-green)', fontWeight: 'bold' }}>
-                  {mlResult?.anomaly_score ?? 0.0} <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>({mlResult?.is_anomaly ? 'Anomaly' : 'Nominal'})</span>
+                  {mlResult ? (mlResult.anomaly_score ?? 0.0) : "--"} <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>({mlResult ? (mlResult.is_anomaly ? 'Anomaly' : 'Nominal') : 'Untrained'})</span>
                 </div>
               </div>
             </div>
@@ -473,14 +518,14 @@ export const StationHUD = () => {
 
           {/* Table of Discovered Nearby Stations */}
           <div style={{ fontSize: '0.72rem', fontFamily: 'var(--font-tactical)', color: 'var(--text-muted)', marginBottom: '8px' }}>
-            <i className="fa-solid fa-list-check"></i> DISCOVERED PEERS WITHIN {neighborRadiusKm} KM (HAVERSINE GEODESIC):
+            <i className="fa-solid fa-list-check"></i> DISCOVERED PEERS WITHIN {spatialData?.search_radius_km ?? 60} KM (HAVERSINE GEODESIC):
           </div>
 
           {(!spatialData?.nearby_stations || spatialData.nearby_stations.length === 0) ? (
             <div style={{ padding: '20px', textAlign: 'center', background: 'rgba(10,15,29,0.5)', border: '1px dashed var(--border-medium)', borderRadius: '4px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
               <i className="fa-solid fa-compass" style={{ fontSize: '1.5rem', marginBottom: '8px', color: 'var(--text-muted)' }}></i>
-              <div>No other weather stations found within {neighborRadiusKm} km of {station.name}.</div>
-              <div style={{ fontSize: '0.68rem', marginTop: '4px' }}>Increase the search radius slider above to expand neighborhood coverage. Local ML continues to operate independently.</div>
+              <div>No other weather stations found within {spatialData?.search_radius_km ?? 60} km of {station.name}.</div>
+              <div style={{ fontSize: '0.68rem', marginTop: '4px' }}>Local ML continues to operate independently.</div>
             </div>
           ) : (
             <div className="tactical-table-wrapper">
@@ -525,7 +570,7 @@ export const StationHUD = () => {
                           <button
                             className="cyber-btn btn-sm"
                             style={{ fontSize: '0.65rem', padding: '2px 6px' }}
-                            onClick={() => setActiveStationId(peer.id)}
+                            onClick={() => setInspectedPeerId(peer.id)}
                           >
                             Inspect Peer
                           </button>
@@ -539,6 +584,7 @@ export const StationHUD = () => {
           )}
         </div>
       </div>
+      )}
     </>
   );
 };

@@ -25,8 +25,8 @@ export const Topbar = ({ onToggleMobileSidebar }) => {
   let displayTitle = info.title;
   let displaySub = info.sub;
   if (['station-hud', 'station-upload', 'station-diagnostics', 'station-checklist', 'edge-sync'].includes(currentView)) {
-    displayTitle = `${activeStationId || 'AWS'} ${info.title}`;
-    displaySub = `${activeStationId || 'AWS'} ${info.sub}`;
+    displayTitle = activeStationId ? `${activeStationId} — ${info.title}` : info.title;
+    displaySub = info.sub;
   }
 
   const isOnline = liveApiStatus?.isOnline ?? true;

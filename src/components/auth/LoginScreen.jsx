@@ -4,8 +4,8 @@ import { tacticalAudio } from '../../utils/audio';
 
 export const LoginScreen = () => {
   const { login } = useAuth();
-  const [activeTab, setActiveTab] = useState('station_operator'); // 'admin' | 'station_operator'
-  const [username, setUsername] = useState('operator_hyd');
+  const [activeTab, setActiveTab] = useState('admin'); // 'admin' | 'station_operator'
+  const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('sentinel2026');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -18,8 +18,8 @@ export const LoginScreen = () => {
       setUsername('admin');
       setPassword('sentinel2026');
     } else {
-      setUsername('operator_hyd');
-      setPassword('sentinel2026');
+      setUsername('');
+      setPassword('');
     }
     tacticalAudio.playSwitch();
   };
@@ -57,7 +57,7 @@ export const LoginScreen = () => {
             <i className="fa-solid fa-shield-halved"></i>
           </div>
           <div className="auth-title">SKYGUARD-AI</div>
-          <div className="auth-subtitle">SQLITE AUTHENTICATED WEATHER QUALITY ASSURANCE & MET-AI TELEMETRY</div>
+          <div className="auth-subtitle">INTELLIGENT ANOMALY DETECTION FOR AUTOMATIC WEATHER STATIONS (AWS)</div>
         </div>
 
         {/* Role Switcher Tabs */}
@@ -84,8 +84,8 @@ export const LoginScreen = () => {
             <i className={activeTab === 'admin' ? "fa-solid fa-lock" : "fa-solid fa-satellite-dish"}></i>
             <span>
               {activeTab === 'admin'
-                ? "CENTRAL COMMAND & FLEET SUPERVISION ACCESS (SQLITE)"
-                : "STATION / FIELD OPERATOR TERMINAL ACCESS (SQLITE)"}
+                ? "CENTRAL COMMAND & FLEET GOVERNANCE ACCESS"
+                : "STATION OPERATOR COCKPIT ACCESS"}
             </span>
           </div>
 
@@ -94,7 +94,7 @@ export const LoginScreen = () => {
             <div className="cyber-input-group">
               <label className="cyber-input-label" htmlFor="auth-username-input">
                 <span>{activeTab === 'admin' ? 'ADMIN IDENTIFIER' : 'STATION USERNAME / STATION ID'}</span>
-                <span style={{ fontSize: '0.65rem', color: 'var(--neon-cyan)' }}>SQLITE VERIFIED</span>
+                <span style={{ fontSize: '0.65rem', color: 'var(--neon-cyan)' }}>SECURE RBAC</span>
               </label>
               <div className="cyber-input-wrapper">
                 <i className={`fa-solid ${activeTab === 'admin' ? 'fa-id-badge' : 'fa-user'} cyber-input-icon`}></i>
@@ -185,43 +185,9 @@ export const LoginScreen = () => {
                   👑 Admin: admin / sentinel2026
                 </button>
               ) : (
-                <>
-                  <button
-                    type="button"
-                    className="demo-pill"
-                    onClick={() => handleDemoFill('operator_hyd', 'sentinel2026')}
-                  >
-                    📡 AWS-07 (Hyderabad)
-                  </button>
-                  <button
-                    type="button"
-                    className="demo-pill"
-                    onClick={() => handleDemoFill('operator_mum', 'sentinel2026')}
-                  >
-                    📡 AWS-12 (Mumbai)
-                  </button>
-                  <button
-                    type="button"
-                    className="demo-pill"
-                    onClick={() => handleDemoFill('operator_cherra', 'sentinel2026')}
-                  >
-                    📡 AWS-19 (Cherrapunji)
-                  </button>
-                  <button
-                    type="button"
-                    className="demo-pill"
-                    onClick={() => handleDemoFill('operator_del', 'sentinel2026')}
-                  >
-                    📡 AWS-01 (Delhi)
-                  </button>
-                  <button
-                    type="button"
-                    className="demo-pill"
-                    onClick={() => handleDemoFill('operator_leh', 'sentinel2026')}
-                  >
-                    📡 AWS-21 (Leh)
-                  </button>
-                </>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center', padding: '6px 0' }}>
+                  No pre-configured stations. Login as <strong style={{ color: 'var(--neon-cyan)', cursor: 'pointer' }} onClick={() => handleTabChange('admin')}>Central Admin</strong> to provision stations.
+                </div>
               )}
             </div>
           </div>

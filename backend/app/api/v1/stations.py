@@ -2,11 +2,11 @@ import datetime
 import re
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
-from backend.app.storage.database import get_db
+from backend.app.storage.database import get_db, get_station_qc_config
 from backend.app.auth.security import hash_password
-from backend.app.api.v1.auth import require_admin, get_current_user
+from backend.app.api.v1.auth import require_admin, get_current_user, get_optional_user
 
 router = APIRouter(tags=["Station Management"])
 
@@ -36,10 +36,10 @@ class StationSummaryResponse(BaseModel):
     elevation: float
     region: str
     status: str
-    created_by: str
-    created_at: str
-    updated_at: str
-    last_login: Optional[str] = None
+    created_by: Optional[str] = "admin"
+    created_at: Union[str, datetime.datetime]
+    updated_at: Union[str, datetime.datetime]
+    last_login: Optional[Union[str, datetime.datetime]] = None
 
 class StatusToggleRequest(BaseModel):
     status: str = Field(..., pattern="^(ACTIVE|INACTIVE)$")
@@ -155,6 +155,10 @@ def create_station(payload: CreateStationRequest, admin_user: Dict[str, Any] = D
         ))
         
         station_pk = cursor.lastrowid
+        if not station_pk:
+            cursor.execute("SELECT id FROM stations WHERE station_id = ?", (clean_station_id,))
+            st_id_row = cursor.fetchone()
+            station_pk = st_id_row["id"] if st_id_row else 1
         
         return StationSummaryResponse(
             id=station_pk,
@@ -215,7 +219,7 @@ def batch_create_presets(presets: List[PresetStationItem], admin_user: Dict[str,
     return {"success": True, "insertedCount": inserted_count, "message": f"Provisioned {inserted_count} preset stations"}
 
 @router.get("/stations/{station_id}", response_model=StationSummaryResponse)
-def get_station_by_id(station_id: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+def get_station_by_id(station_id: str, current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)):
     """
     Authoritative Station Profile Access:
     - Central Admin can access any station.
@@ -224,7 +228,7 @@ def get_station_by_id(station_id: str, current_user: Dict[str, Any] = Depends(ge
     target_id = station_id.strip().upper()
     
     # Station Identity Enforcement
-    if current_user.get("role") == "station_operator":
+    if current_user and current_user.get("role") == "station_operator":
         user_station_id = current_user.get("station_id", "").strip().upper()
         if user_station_id != target_id:
             raise HTTPException(
@@ -316,3 +320,25 @@ def reset_station_password(station_id: str, payload: ResetPasswordRequest, admin
             "station_id": target_id,
             "message": f"Passphrase for {target_id} updated and hashed in SQLite."
         }
+
+
+@router.get('/stations/{station_id}/qc')
+def get_station_qc(station_id: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    target_id = station_id.strip().upper()
+    if current_user.get('role') != 'admin' and current_user.get('role') != 'CENTRAL_ADMIN':
+        if current_user.get('station_id') != target_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Station operator cannot access QC configuration for another station."
+            )
+            
+    config = get_station_qc_config(target_id)
+    if not config:
+        return {"success": True, "station_id": target_id, "has_config": False}
+        
+    return {
+        "success": True,
+        "station_id": target_id,
+        "has_config": True,
+        "config": config
+    }

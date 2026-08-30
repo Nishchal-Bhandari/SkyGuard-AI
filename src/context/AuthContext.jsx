@@ -13,8 +13,10 @@ export const AuthProvider = ({ children }) => {
       const data = localStorage.getItem(STORAGE_KEY);
       if (data) {
         const parsed = JSON.parse(data);
-        if (parsed.token) apiClient.setToken(parsed.token);
-        return parsed;
+        if (parsed && parsed.token) {
+          apiClient.setToken(parsed.token);
+          return parsed;
+        }
       }
     } catch (e) {}
     return {

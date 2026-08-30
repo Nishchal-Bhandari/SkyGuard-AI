@@ -1,7 +1,7 @@
 /**
  * SkyGuard-AI — Backend API Client
  * 
- * Handles authenticated communication with the FastAPI / SQLite backend service.
+ * Handles authenticated communication with the FastAPI / Cloud PostgreSQL backend service.
  */
 
 const API_BASE = "/api/v1";
@@ -9,13 +9,26 @@ const API_BASE = "/api/v1";
 class ApiClient {
   constructor() {
     this.token = null;
+    this.syncTokenFromStorage();
+  }
+
+  syncTokenFromStorage() {
     try {
-      const savedAuth = localStorage.getItem("skyguard_auth_v2");
+      const savedAuth = localStorage.getItem("skyguard_auth_v3") || localStorage.getItem("skyguard_auth_v2");
       if (savedAuth) {
         const parsed = JSON.parse(savedAuth);
-        this.token = parsed.token || null;
+        if (parsed && parsed.token) {
+          this.token = parsed.token;
+          return this.token;
+        }
       }
     } catch (e) {}
+    return null;
+  }
+
+  getToken() {
+    if (this.token) return this.token;
+    return this.syncTokenFromStorage();
   }
 
   setToken(token) {
@@ -28,9 +41,12 @@ class ApiClient {
 
   async request(endpoint, options = {}) {
     const url = `${API_BASE}${endpoint}`;
+    const isFormData = options.body instanceof FormData;
+    const token = this.getToken();
+
     const headers = {
-      "Content-Type": "application/json",
-      ...(this.token ? { "Authorization": `Bearer ${this.token}` } : {}),
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
       ...(options.headers || {})
     };
 
@@ -43,8 +59,8 @@ class ApiClient {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        const errorMsg = data.detail || data.message || `Request failed with HTTP ${response.status}`;
-        throw new Error(errorMsg);
+        const errorDetail = typeof data.detail === 'object' ? JSON.stringify(data.detail) : (data.detail || data.message || `Request failed with HTTP ${response.status}`);
+        throw new Error(errorDetail);
       }
 
       return data;
@@ -134,6 +150,115 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify({ new_password: newPassword })
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Cloud PostgreSQL Telemetry Pipeline Endpoints
+  // -------------------------------------------------------------------------
+
+  async uploadStationTelemetry(stationId, fileOrList) {
+    if (fileOrList instanceof File) {
+      const formData = new FormData();
+      formData.append("file", fileOrList);
+      return await this.request(`/stations/${stationId}/telemetry/upload`, {
+        method: "POST",
+        body: formData
+      });
+    } else if (Array.isArray(fileOrList)) {
+      return await this.request(`/stations/${stationId}/telemetry/upload`, {
+        method: "POST",
+        body: JSON.stringify(fileOrList)
+      });
+    } else {
+      throw new Error("Invalid payload: Expected File object or array of telemetry records");
+    }
+  }
+
+  async getStationTelemetryStats(stationId) {
+    return await this.request(`/stations/${stationId}/telemetry/stats`);
+  }
+
+  async getFleetLiveState() {
+    return await this.request(`/stations/fleet/live`);
+  }
+
+  // -------------------------------------------------------------------------
+  // Fault Injection Endpoints
+  // -------------------------------------------------------------------------
+
+  async injectFault(stationId, faultType, offsetVal = null) {
+    return await this.request(`/stations/${stationId}/faults/inject`, {
+      method: "POST",
+      body: JSON.stringify({ fault_type: faultType, offset_val: offsetVal })
+    });
+  }
+
+  async resetFault(stationId) {
+    return await this.request(`/stations/${stationId}/faults/reset`, {
+      method: "POST"
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Anomaly Incident Triage & Adjudication Endpoints
+  // -------------------------------------------------------------------------
+
+  async getIncidents(stationId = null, status = null) {
+    let query = [];
+    if (stationId) query.push(`station_id=${encodeURIComponent(stationId)}`);
+    if (status) query.push(`status=${encodeURIComponent(status)}`);
+    const qs = query.length > 0 ? `?${query.join('&')}` : '';
+    return await this.request(`/incidents${qs}`);
+  }
+
+  async adjudicateIncident(incidentId, action) {
+    return await this.request(`/incidents/${encodeURIComponent(incidentId)}/adjudicate`, {
+      method: "POST",
+      body: JSON.stringify({ action })
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // MLOps Pipeline Endpoints
+  // -------------------------------------------------------------------------
+
+  async trainStationModel(stationId, options = {}) {
+    return await this.request(`/stations/${stationId}/train`, {
+      method: "POST",
+      body: JSON.stringify(options)
+    });
+  }
+
+  async getStationTrainingJobs(stationId) {
+    return await this.request(`/stations/${stationId}/training-jobs`);
+  }
+
+  async getTrainingJobStatus(stationId, jobId) {
+    return await this.request(`/stations/${stationId}/training-jobs/${jobId}/status?_t=${Date.now()}`);
+  }
+
+  async getStationModels(stationId) {
+    return await this.request(`/stations/${stationId}/models`);
+  }
+
+  async getStationActiveModel(stationId) {
+    return await this.request(`/stations/${stationId}/models/active`);
+  }
+
+  async rollbackStationModel(stationId, modelVersion) {
+    return await this.request(`/stations/${stationId}/models/${modelVersion}/rollback`, {
+      method: "POST"
+    });
+  }
+
+  async scoreRealtimeTelemetry(stationId, observation, lastObservation = null) {
+    return await this.request(`/stations/${stationId}/score`, {
+      method: "POST",
+      body: JSON.stringify({ observation, last_observation: lastObservation })
+    });
+  }
+  async getStationQC(stationId) {
+    return await this.request(`/stations/${stationId}/qc`);
   }
 }
 

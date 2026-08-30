@@ -70,6 +70,19 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, A
     
     return payload
 
+
+def get_optional_user(authorization: Optional[str] = Header(None)) -> Optional[Dict[str, Any]]:
+    """
+    Optional token extractor. Returns payload if valid Bearer token is provided, otherwise None.
+    Does not raise 401 if Authorization header is missing.
+    """
+    if not authorization:
+        return None
+    parts = authorization.split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return decode_access_token(parts[1])
+    return None
+
 def require_admin(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """
     Guard requiring Central Admin role.

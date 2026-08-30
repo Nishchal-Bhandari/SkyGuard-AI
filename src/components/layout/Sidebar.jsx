@@ -128,10 +128,10 @@ export const Sidebar = ({ collapsed, setCollapsed }) => {
               className={`nav-item ${currentView === 'station-upload' ? 'active' : ''}`}
               data-view="station-upload"
               onClick={() => handleNavClick('station-upload')}
-              title="Training Studio (Audit)"
+              title="Station Training Studio"
             >
               <i className="fa-solid fa-microchip"></i>
-              <span>Training Studio (Audit)</span>
+              <span>Station Training Studio</span>
             </a>
             <a
               className={`nav-item ${currentView === 'export' ? 'active' : ''}`}
