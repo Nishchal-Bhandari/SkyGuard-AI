@@ -34,56 +34,38 @@ export const CommandCenter = () => {
 
   return (
     <>
-      {/* Tactical Open-Meteo Real-Time Banner */}
-      <div className="cyber-card" style={{ marginBottom: '14px', borderLeft: '4px solid var(--neon-cyan)', background: 'linear-gradient(90deg, rgba(0, 240, 255, 0.05) 0%, rgba(5, 8, 17, 0.8) 100%)' }}>
+      {/* Fleet Command Operational Header */}
+      <div className="cyber-card" style={{ marginBottom: '14px', background: 'rgba(10, 15, 29, 0.85)', padding: '12px 18px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-            <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'rgba(0, 240, 255, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(0, 240, 255, 0.3)' }}>
-              <i className="fa-solid fa-cloud-bolt text-cyan" style={{ fontSize: '1.2rem' }}></i>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ width: '36px', height: '36px', borderRadius: '6px', background: 'rgba(0, 240, 255, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(0, 240, 255, 0.3)' }}>
+              <i className="fa-solid fa-gauge-high text-cyan"></i>
             </div>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.92rem', fontWeight: 800, color: 'var(--neon-cyan)', letterSpacing: '0.05em' }}>
-                  OPEN-METEO REAL-TIME METEOROLOGICAL INGESTION
-                </span>
-                <span className={`cyber-badge ${liveApiStatus.isOnline ? 'badge-normal' : 'badge-suspect'}`} style={{ fontSize: '0.65rem' }}>
-                  {liveApiStatus.isSyncing ? 'SYNCING API' : liveApiStatus.isOnline ? `API ONLINE (${liveApiStatus.latencyMs}ms)` : 'STANDBY'}
-                </span>
+              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.92rem', fontWeight: 800, color: 'var(--neon-cyan)' }}>
+                CENTRAL FLEET OPERATIONS & SENSOR MATRIX
               </div>
-              <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                Streaming live atmospheric telemetry (temperature, humidity, surface pressure, wind vectors, precipitation) across station coordinates.
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                Monitoring {stations.length} Automatic Weather Stations across meteorological sectors.
               </div>
             </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {stations.length === 0 ? (
-              <button
-                className="cyber-btn btn-sm btn-primary"
-                onClick={() => setCurrentView('credentials')}
-                style={{ padding: '7px 14px', fontSize: '0.78rem' }}
-              >
-                <i className="fa-solid fa-key"></i> Provision Weather Station
-              </button>
-            ) : (
-              <>
-                <button
-                  className="cyber-btn btn-sm"
-                  onClick={handleSyncNow}
-                  disabled={liveApiStatus.isSyncing}
-                  style={{ padding: '6px 12px', fontSize: '0.75rem', borderColor: 'var(--neon-cyan)' }}
-                >
-                  <i className={`fa-solid fa-arrows-rotate text-cyan ${liveApiStatus.isSyncing ? 'fa-spin' : ''}`}></i> Sync All Live Now
-                </button>
-                <button
-                  className="cyber-btn btn-sm"
-                  onClick={() => setCurrentView('credentials')}
-                  style={{ padding: '6px 12px', fontSize: '0.75rem' }}
-                >
-                  <i className="fa-solid fa-plus"></i> Add Custom Station
-                </button>
-              </>
-            )}
+            <button
+              className="cyber-btn btn-sm"
+              onClick={() => setCurrentView('fleet-map')}
+              style={{ fontSize: '0.74rem' }}
+            >
+              <i className="fa-solid fa-map-location-dot"></i> Geospatial Radar
+            </button>
+            <button
+              className="cyber-btn btn-sm btn-primary"
+              onClick={() => setCurrentView('credentials')}
+              style={{ fontSize: '0.74rem' }}
+            >
+              <i className="fa-solid fa-key"></i> Provision Station
+            </button>
           </div>
         </div>
       </div>

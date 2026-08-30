@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useWeather } from '../../context/WeatherContext';
+import { apiClient } from '../../utils/apiClient';
 import { tacticalAudio } from '../../utils/audio';
 
 export const ModelGovernance = () => {
@@ -9,12 +10,35 @@ export const ModelGovernance = () => {
   const isOperator = role === 'station_operator' || role === 'STATION_OPERATOR';
   const isAdmin = role === 'admin' || role === 'CENTRAL_ADMIN';
 
-  const defaultStation = isOperator && assignedStationId ? assignedStationId : (activeStationId || stations[0]?.id || 'AWS-01');
+  const defaultStation = isOperator && assignedStationId ? assignedStationId : (activeStationId || stations[0]?.id || 'AWS-07');
   const [selectedStationId, setSelectedStationId] = useState(defaultStation);
+  const [dbModels, setDbModels] = useState([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [rollbackStatus, setRollbackStatus] = useState('');
 
   const selectedStation = stations.find(s => s.id === selectedStationId) || stations[0] || {};
   const stationModelEntry = activeStationModels[selectedStationId];
   const activeModel = stationModelEntry?.modelCard || modelRegistry.find(m => m.station_id === selectedStationId) || null;
+
+  const fetchStationModels = async (stId) => {
+    setIsLoadingModels(true);
+    try {
+      const res = await apiClient.getStationModels(stId);
+      if (res.success) {
+        setDbModels(res.models || []);
+      }
+    } catch (e) {
+      console.warn("[ModelGovernance] Failed to fetch models:", e.message);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedStationId) {
+      fetchStationModels(selectedStationId);
+    }
+  }, [selectedStationId]);
 
   const handleDownloadModelCard = (model) => {
     if (!model) return;
@@ -25,6 +49,25 @@ export const ModelGovernance = () => {
     a.download = `model-card-${model.model_id || model.id}-${Date.now()}.json`;
     a.click();
     tacticalAudio.playSuccess();
+  };
+
+  const handleRollback = async (targetVersion) => {
+    if (!isAdmin) return;
+    setRollbackStatus(`Initiating rollback for ${selectedStationId} to ${targetVersion}...`);
+    try {
+      const res = await rollbackModel(selectedStationId, targetVersion);
+      if (res.success) {
+        setRollbackStatus(`SUCCESS: Rolled back ${selectedStationId} to ${targetVersion}. Model activated.`);
+        fetchStationModels(selectedStationId);
+        tacticalAudio.playSuccess();
+      } else {
+        setRollbackStatus(`Rollback failed: ${res.error}`);
+        tacticalAudio.playAlarm();
+      }
+    } catch (e) {
+      setRollbackStatus(`Rollback error: ${e.message}`);
+      tacticalAudio.playAlarm();
+    }
   };
 
   if (!stations || stations.length === 0) {
@@ -50,15 +93,10 @@ export const ModelGovernance = () => {
 
   return (
     <>
-      {/* Top Architecture Alert */}
-      <div style={{ background: 'rgba(0, 240, 255, 0.05)', border: '1px solid rgba(0, 240, 255, 0.25)', padding: '12px 18px', borderRadius: '6px', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-        <div>
-          <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.9rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
-            <i className="fa-solid fa-microchip"></i> STATION-ADAPTIVE MLOPS GOVERNANCE & AUDIT REGISTRY
-          </div>
-          <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Zero universal pre-trained models. Each weather station maintains its own distinct tree ensemble and calibrated threshold.
-          </div>
+      {/* Top Header & Station Selector */}
+      <div style={{ background: 'rgba(10, 15, 29, 0.85)', border: '1px solid var(--border-subtle)', padding: '12px 18px', borderRadius: '6px', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.92rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+          <i className="fa-solid fa-microchip"></i> MODEL GOVERNANCE & VERSION REGISTRY
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -74,11 +112,26 @@ export const ModelGovernance = () => {
             style={{ background: '#050811', padding: '4px 8px', fontSize: '0.78rem' }}
           >
             {availableStations.map(st => (
-              <option key={st.id} value={st.id}>{st.id} ({st.name})</option>
+              <option key={st.id} value={st.id}>{st.id} — {st.name}</option>
             ))}
           </select>
         </div>
       </div>
+
+      {rollbackStatus && (
+        <div style={{
+          background: rollbackStatus.startsWith("SUCCESS") ? 'rgba(0,255,102,0.08)' : 'rgba(255,170,0,0.08)',
+          border: `1px solid ${rollbackStatus.startsWith("SUCCESS") ? 'var(--neon-green)' : 'var(--neon-amber)'}`,
+          color: rollbackStatus.startsWith("SUCCESS") ? 'var(--neon-green)' : 'var(--neon-amber)',
+          padding: '10px 14px',
+          borderRadius: '4px',
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.74rem',
+          marginBottom: '14px'
+        }}>
+          <i className="fa-solid fa-clock-rotate-left"></i> {rollbackStatus}
+        </div>
+      )}
 
       {/* Selected Station Model Card */}
       <div className="cyber-card">
@@ -92,11 +145,9 @@ export const ModelGovernance = () => {
                 <button className="cyber-btn btn-sm" onClick={() => handleDownloadModelCard(activeModel)}>
                   <i className="fa-solid fa-download"></i> Export Model Card (JSON)
                 </button>
-                {isAdmin && (
-                  <button className="cyber-btn btn-sm btn-danger" onClick={() => rollbackModel(selectedStationId)}>
-                    <i className="fa-solid fa-rotate-left"></i> Rollback Model
-                  </button>
-                )}
+                <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('station-upload')}>
+                  <i className="fa-solid fa-cloud-arrow-up"></i> Train New Version
+                </button>
               </>
             )}
           </div>
@@ -113,18 +164,12 @@ export const ModelGovernance = () => {
               <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', maxWidth: '560px', margin: '8px auto 16px auto' }}>
                 In accordance with the zero-global-model principle, {selectedStation.name} has not inherited an arbitrary national model. It is currently operating securely under <strong>universal deterministic physical QC rules</strong> until historical datalogger logs are ingested.
               </p>
-              {isOperator ? (
-                <button
-                  className="cyber-btn btn-sm btn-primary"
-                  onClick={() => setCurrentView('station-upload')}
-                >
-                  <i className="fa-solid fa-cloud-arrow-up"></i> Ingest Logs & Train {selectedStation.id} Model
-                </button>
-              ) : (
-                <div style={{ fontSize: '0.74rem', color: 'var(--neon-amber)', fontFamily: 'var(--font-mono)' }}>
-                  <i className="fa-solid fa-lock"></i> Training restricted to authorized Station Operator
-                </div>
-              )}
+              <button
+                className="cyber-btn btn-sm btn-primary"
+                onClick={() => setCurrentView('station-upload')}
+              >
+                <i className="fa-solid fa-cloud-arrow-up"></i> Ingest Logs & Train {selectedStation.id} Model
+              </button>
             </div>
           ) : (
 
@@ -138,7 +183,7 @@ export const ModelGovernance = () => {
                     <span className="cyber-badge badge-offline">{activeModel.version || "v1.0"}</span>
                   </div>
                   <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: '4px' }}>
-                    Trained on {activeModel.created_at || "Recent Session"} for {selectedStation.name}
+                    Trained for {selectedStation.name} | Stored in Cloud PostgreSQL Model Registry
                   </div>
                 </div>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--text-muted)', background: 'rgba(5,8,17,0.7)', padding: '6px 10px', borderRadius: '4px', border: '1px solid var(--border-subtle)' }}>
@@ -173,8 +218,8 @@ export const ModelGovernance = () => {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
                     <div>Dynamic Threshold: <strong style={{ color: 'var(--neon-amber)' }}>{activeModel.training_summary?.dynamic_threshold || 0.65}</strong></div>
                     <div>Contamination Rate: <strong style={{ color: 'var(--neon-cyan)' }}>{activeModel.training_summary?.contamination_rate_pct || 5.0}%</strong></div>
-                    <div>Training Rows: <strong style={{ color: 'var(--neon-green)' }}>{activeModel.training_summary?.valid_training_rows || 24}</strong></div>
-                    <div>Scrubbed Errors: <strong style={{ color: 'var(--neon-red)' }}>{activeModel.training_summary?.scrubbed_invalid_rows || 0}</strong></div>
+                    <div>Training Rows: <strong style={{ color: 'var(--neon-green)' }}>{activeModel.training_summary?.valid_records || activeModel.training_summary?.valid_training_rows || 30}</strong></div>
+                    <div>Scrubbed Errors: <strong style={{ color: 'var(--neon-red)' }}>{activeModel.training_summary?.scrubbed_records || 0}</strong></div>
                   </div>
                 </div>
 
@@ -195,10 +240,10 @@ export const ModelGovernance = () => {
               {/* Versioned Feature Definitions */}
               <div style={{ marginTop: '14px', background: 'rgba(10,15,29,0.6)', border: '1px solid var(--border-subtle)', padding: '14px', borderRadius: '4px' }}>
                 <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.78rem', color: 'var(--neon-purple)', fontWeight: 700, marginBottom: '8px' }}>
-                  <i className="fa-solid fa-layer-group"></i> FEATURES DERIVED SPECIFICALLY FOR {selectedStation.id}
+                  <i className="fa-solid fa-layer-group"></i> 8-DIMENSIONAL FEATURES CALIBRATED FOR {selectedStation.id}
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                  {(activeModel.training_summary?.features_used || [
+                  {(activeModel.training_summary?.features || [
                     "temperature_norm",
                     "humidity_norm",
                     "pressure_norm",
@@ -216,6 +261,74 @@ export const ModelGovernance = () => {
               </div>
             </>
           )}
+        </div>
+      </div>
+
+      {/* Model Version Ledger & Rollback Table */}
+      <div className="cyber-card" style={{ marginTop: '16px' }}>
+        <div className="cyber-card-header">
+          <div className="cyber-card-title">
+            <i className="fa-solid fa-clock-rotate-left text-green"></i> {selectedStation.id} MODEL VERSION REGISTRY & ROLLBACK CONTROLS
+          </div>
+          <span className="cyber-badge badge-normal">POSTGRESQL MODEL_REGISTRY</span>
+        </div>
+        <div className="cyber-card-body" style={{ padding: 0 }}>
+          <div className="tactical-table-wrapper">
+            <table className="tactical-table">
+              <thead>
+                <tr>
+                  <th>VERSION</th>
+                  <th>MODEL ID</th>
+                  <th>ALGORITHM</th>
+                  <th>DYNAMIC THRESHOLD</th>
+                  <th>TRAINING ROWS</th>
+                  <th>STATUS</th>
+                  <th>CREATED AT</th>
+                  <th>ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dbModels.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px' }}>
+                      No versioned models registered yet for {selectedStation.id}. Upload historical telemetry to train version v1.0.
+                    </td>
+                  </tr>
+                ) : (
+                  dbModels.map(m => (
+                    <tr key={m.id}>
+                      <td style={{ fontWeight: 700, color: 'var(--neon-cyan)' }}>{m.model_version}</td>
+                      <td><code>{m.model_id}</code></td>
+                      <td>{m.model_type}</td>
+                      <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--neon-amber)' }}>{m.threshold}</td>
+                      <td>{m.training_rows}</td>
+                      <td>
+                        <span className={`cyber-badge ${m.status === 'ACTIVE' ? 'badge-normal' : 'badge-offline'}`}>
+                          {m.status}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: '0.7rem' }}>{m.created_at ? new Date(m.created_at).toLocaleString() : "-"}</td>
+                      <td>
+                        {m.status === 'ACTIVE' ? (
+                          <span style={{ fontSize: '0.7rem', color: 'var(--neon-green)', fontWeight: 'bold' }}>CURRENT ACTIVE</span>
+                        ) : isAdmin ? (
+                          <button
+                            className="cyber-btn btn-sm btn-danger"
+                            onClick={() => handleRollback(m.model_version)}
+                            style={{ fontSize: '0.65rem', padding: '2px 8px' }}
+                          >
+                            <i className="fa-solid fa-rotate-left"></i> Rollback to {m.model_version}
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Archived</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 

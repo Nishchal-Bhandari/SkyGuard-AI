@@ -62,7 +62,11 @@ export const Incidents = () => {
                 ) : (
                   visibleIncidents.map(inc => {
                   const badgeClass = inc.severity === 'critical' || inc.severity === 'high' ? 'badge-critical' : 'badge-suspect';
-                  const stateBadge = inc.quality_state === 'GENUINE_EXTREME_CANDIDATE' ? 'badge-extreme' : 'badge-suspect';
+                  const stateBadge = inc.quality_state === 'GENUINE_EXTREME_CANDIDATE' || inc.quality_state === 'REGIONAL_EVENT' 
+                    ? 'badge-extreme' 
+                    : inc.quality_state === 'LOCALIZED_ANOMALY' 
+                    ? 'badge-critical' 
+                    : 'badge-suspect';
                   const statusBadge = inc.status === 'open' ? 'badge-critical' : inc.status === 'acknowledged' ? 'badge-suspect' : 'badge-normal';
 
                   return (
