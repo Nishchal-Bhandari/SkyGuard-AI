@@ -150,7 +150,7 @@ async def upload_station_telemetry(
 
                 # 2. Timestamp extraction — kept as a clean ISO-8601 string
                 #    (must remain a valid TIMESTAMPTZ for PostgreSQL)
-                raw_ts = row.get(header_map.get("timestamp", header_map.get("time", header_map.get("date", header_map.get("valid_time_utc", "")))))
+                raw_ts = row.get(header_map.get("timestamp", header_map.get("time", header_map.get("date", header_map.get("valid_time_utc", header_map.get("valid_time", ""))))))
                 if not raw_ts:
                     rejected_rows.append({"line": line_idx, "reason": "Missing timestamp column"})
                     continue
@@ -171,17 +171,56 @@ async def upload_station_telemetry(
 
                 # 3. Numeric fields
                 try:
-                    temp_val = row.get(header_map.get("temperature_c", header_map.get("temp", header_map.get("temperature", header_map.get("t2m_deg_c", "")))))
+                    temp_val = row.get(header_map.get("temperature_c", header_map.get("temp", header_map.get("temperature", header_map.get("t2m_deg_c", header_map.get("t2m", ""))))))
                     hum_val = row.get(header_map.get("humidity_pct", header_map.get("hum", header_map.get("humidity", header_map.get("relative_humidity_pct", "")))))
-                    pres_val = row.get(header_map.get("pressure_hpa", header_map.get("pres", header_map.get("pressure", header_map.get("msl_hpa", "")))))
+                    pres_val = row.get(header_map.get("pressure_hpa", header_map.get("pres", header_map.get("pressure", header_map.get("msl_hpa", header_map.get("msl", ""))))))
                     wind_val = row.get(header_map.get("wind_speed_kmh", header_map.get("wind", header_map.get("wind_speed", ""))))
-                    rain_val = row.get(header_map.get("rainfall_mm", header_map.get("rain", header_map.get("rainfall", header_map.get("tp_mm", "")))))
+                    rain_val = row.get(header_map.get("rainfall_mm", header_map.get("rain", header_map.get("rainfall", header_map.get("tp_mm", header_map.get("tp", ""))))))
 
-                    temp = float(temp_val) if temp_val not in (None, "", "null") else None
-                    hum = float(hum_val) if hum_val not in (None, "", "null") else None
-                    pres = float(pres_val) if pres_val not in (None, "", "null") else None
+                    # Process Temperature (convert from Kelvin if t2m is used and > 100)
+                    temp = None
+                    if temp_val not in (None, "", "null"):
+                        val = float(temp_val)
+                        if header_map.get("t2m") and val > 100.0:
+                            val = val - 273.15
+                        temp = val
+
+                    # Process Relative Humidity (compute Magnus-Tetens from d2m and t2m if needed)
+                    hum = None
+                    if hum_val not in (None, "", "null"):
+                        hum = float(hum_val)
+                    else:
+                        d2m_val = row.get(header_map.get("d2m"))
+                        t2m_val = row.get(header_map.get("t2m"))
+                        if d2m_val not in (None, "", "null") and t2m_val not in (None, "", "null"):
+                            try:
+                                d2m_k = float(d2m_val)
+                                t2m_k = float(t2m_val)
+                                tc = t2m_k - 273.15
+                                tdc = d2m_k - 273.15
+                                es_tc = 6.11 * (10 ** ((7.5 * tc) / (237.3 + tc)))
+                                es_tdc = 6.11 * (10 ** ((7.5 * tdc) / (237.3 + tdc)))
+                                hum = min(100.0, max(0.0, (es_tdc / es_tc) * 100.0))
+                            except Exception:
+                                pass
+
+                    # Process Pressure (convert from Pa to hPa if msl is used and > 50000)
+                    pres = None
+                    if pres_val not in (None, "", "null"):
+                        val = float(pres_val)
+                        if header_map.get("msl") and val > 50000.0:
+                            val = val / 100.0
+                        pres = val
+
                     wind = float(wind_val) if wind_val not in (None, "", "null") else 10.0
-                    rain = float(rain_val) if rain_val not in (None, "", "null") else 0.0
+
+                    # Process Precipitation (convert from meters to mm if tp is used)
+                    rain = 0.0
+                    if rain_val not in (None, "", "null"):
+                        val = float(rain_val)
+                        if header_map.get("tp"):
+                            val = val * 1000.0
+                        rain = val
 
                     # Range sanity check
                     if temp is not None and (temp < -60.0 or temp > 75.0):

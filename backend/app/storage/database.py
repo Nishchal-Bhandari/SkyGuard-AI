@@ -1266,6 +1266,7 @@ def create_or_update_incident(incident_data: Dict[str, Any]) -> Dict[str, Any]:
             if conn.is_postgres:
                 cur.execute("""
                     UPDATE incidents SET
+                        variable = %s,
                         severity = %s,
                         fault_risk = %s,
                         quality_state = %s,
@@ -1277,6 +1278,7 @@ def create_or_update_incident(incident_data: Dict[str, Any]) -> Dict[str, Any]:
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                 """, (
+                    incident_data.get("variable", "air_temperature"),
                     incident_data.get("severity", "high"),
                     float(incident_data.get("fault_risk", 0.85)),
                     incident_data.get("quality_state", "LOCALIZED_ANOMALY"),
@@ -1290,6 +1292,7 @@ def create_or_update_incident(incident_data: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 cur.execute("""
                     UPDATE incidents SET
+                        variable = ?,
                         severity = ?,
                         fault_risk = ?,
                         quality_state = ?,
@@ -1301,6 +1304,7 @@ def create_or_update_incident(incident_data: Dict[str, Any]) -> Dict[str, Any]:
                         updated_at = ?
                     WHERE id = ?
                 """, (
+                    incident_data.get("variable", "air_temperature"),
                     incident_data.get("severity", "high"),
                     float(incident_data.get("fault_risk", 0.85)),
                     incident_data.get("quality_state", "LOCALIZED_ANOMALY"),
