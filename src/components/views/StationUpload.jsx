@@ -617,85 +617,47 @@ export const StationUpload = () => {
           </div>
 
 
-          {/* 7-Step Pipeline Status Tracker */}
-          {(pipelineState === 'TRAINING' || pipelineState === 'COMPLETED' || pipelineState === 'ERROR') && (
-            <div style={{ background: 'rgba(5,8,17,0.9)', border: '1px solid var(--border-subtle)', borderRadius: '6px', padding: '16px', marginBottom: '16px' }}>
-              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.82rem', color: 'var(--neon-cyan)', fontWeight: 700, marginBottom: '14px' }}>
-                <i className="fa-solid fa-list-check"></i> STATION-ADAPTIVE TRAINING PIPELINE EXECUTION ({activeStationId}):
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px' }}>
-                {PIPELINE_STEPS.map((step, idx) => {
-                  const completedStages = activeJobState?.completed_stages || [];
-                  const isDone = completedStages.includes(step.label);
-                  const isCurrent = activeJobState?.status === 'RUNNING' && activeJobState?.current_stage === step.label;
-
-                  let borderColor = 'var(--border-subtle)';
-                  let icon = 'fa-circle';
-                  let iconColor = 'var(--text-muted)';
-                  let statusText = 'Pending';
-
-                  if (isDone) {
-                    borderColor = 'var(--neon-green)';
-                    icon = 'fa-check-circle';
-                    iconColor = 'var(--neon-green)';
-                    statusText = 'Completed';
-                  } else if (isCurrent) {
-                    borderColor = 'var(--neon-cyan)';
-                    icon = 'fa-spinner fa-spin';
-                    iconColor = 'var(--neon-cyan)';
-                    statusText = 'Active';
-                  }
-
-                  if (activeJobState?.status === 'FAILED' && activeJobState?.current_stage === step.label && !isDone) {
-                     borderColor = 'var(--neon-crimson)';
-                     icon = 'fa-triangle-exclamation';
-                     iconColor = 'var(--neon-crimson)';
-                     statusText = 'Failed';
-                  }
-
-                  return (
-                    <div key={idx} style={{ background: 'rgba(10,15,29,0.7)', border: `1px solid ${borderColor}`, borderRadius: '4px', padding: '10px 8px', textAlign: 'center' }}>
-                      <i className={`fa-solid ${icon}`} style={{ color: iconColor, fontSize: '1rem', marginBottom: '6px' }}></i>
-                      <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '3px' }}>
-                        {step.label}
-                      </div>
-                      <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }}>
-                        {statusText}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Success Result Certificate */}
-              {pipelineState === 'COMPLETED' && trainedResult && (
-                <div style={{ marginTop: '16px', background: 'rgba(0,255,102,0.06)', border: '1px solid var(--neon-green)', borderRadius: '6px', padding: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                  <div>
-                    <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.95rem', fontWeight: 800, color: 'var(--neon-green)' }}>
-                      <i className="fa-solid fa-shield-check"></i> SUCCESS — {trainedResult.station_id} MODEL {trainedResult.version || "ACTIVE"} TRAINED & ACTIVATED
-                    </div>
-                    <div style={{ fontSize: '0.74rem', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                      {trainedResult.training_summary?.valid_records || availableHistoricalCount} historical records processed | 8 features generated | Dynamic Threshold: <strong style={{ color: 'var(--neon-cyan)' }}>{trainedResult.training_summary?.dynamic_threshold || trainedResult.threshold}</strong> | Model ID: <strong style={{ color: 'var(--neon-cyan)' }}>{trainedResult.model_id}</strong>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('station-hud')}>
-                      <i className="fa-solid fa-terminal"></i> Cockpit HUD
-                    </button>
-                    <button className="cyber-btn btn-sm" onClick={() => setCurrentView('model-governance')}>
-                      <i className="fa-solid fa-brain"></i> Model Registry
-                    </button>
-                  </div>
+          {/* Active Training Status Indicator */}
+          {pipelineState === 'TRAINING' && (
+            <div style={{ background: 'rgba(5,8,17,0.9)', border: '1px solid var(--neon-cyan)', borderRadius: '6px', padding: '16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <i className="fa-solid fa-circle-notch fa-spin" style={{ color: 'var(--neon-cyan)', fontSize: '1.25rem' }}></i>
+              <div>
+                <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.85rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+                  STATION-ADAPTIVE MODEL TRAINING UNDERWAY ({activeStationId})
                 </div>
-              )}
-
-              {/* Error Box */}
-              {pipelineState === 'ERROR' && (
-                <div style={{ marginTop: '16px', background: 'rgba(255,0,85,0.08)', border: '1px solid var(--neon-crimson)', borderRadius: '6px', padding: '12px', color: 'var(--neon-crimson)', fontSize: '0.78rem' }}>
-                  <i className="fa-solid fa-triangle-exclamation"></i> <strong>Training Execution Blocked:</strong> {errorMessage}
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  Processing dataset... Current phase: <strong style={{ color: 'var(--text-primary)' }}>{activeJobState?.current_stage || "Initializing"}</strong>
                 </div>
-              )}
+              </div>
+            </div>
+          )}
+
+          {/* Success Result Certificate */}
+          {pipelineState === 'COMPLETED' && trainedResult && (
+            <div style={{ background: 'rgba(0,255,102,0.06)', border: '1px solid var(--neon-green)', borderRadius: '6px', padding: '14px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+              <div>
+                <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.95rem', fontWeight: 800, color: 'var(--neon-green)' }}>
+                  <i className="fa-solid fa-shield-check"></i> SUCCESS — {trainedResult.station_id} MODEL {trainedResult.version || "ACTIVE"} TRAINED & ACTIVATED
+                </div>
+                <div style={{ fontSize: '0.74rem', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  {trainedResult.training_summary?.valid_records || availableHistoricalCount} historical records processed | 8 features generated | Dynamic Threshold: <strong style={{ color: 'var(--neon-cyan)' }}>{trainedResult.training_summary?.dynamic_threshold || trainedResult.threshold}</strong> | Model ID: <strong style={{ color: 'var(--neon-cyan)' }}>{trainedResult.model_id}</strong>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('station-hud')}>
+                  <i className="fa-solid fa-terminal"></i> Cockpit HUD
+                </button>
+                <button className="cyber-btn btn-sm" onClick={() => setCurrentView('model-governance')}>
+                  <i className="fa-solid fa-brain"></i> Model Registry
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Error Box */}
+          {pipelineState === 'ERROR' && (
+            <div style={{ background: 'rgba(255,0,85,0.08)', border: '1px solid var(--neon-crimson)', borderRadius: '6px', padding: '12px', color: 'var(--neon-crimson)', fontSize: '0.78rem', marginBottom: '16px' }}>
+              <i className="fa-solid fa-triangle-exclamation"></i> <strong>Training Execution Blocked:</strong> {errorMessage}
             </div>
           )}
 

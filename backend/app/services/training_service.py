@@ -94,7 +94,7 @@ class StationAdaptiveTrainingService:
             # 1. Data Ingested
             # -----------------------------------------------------------------
             update_training_job_stage(job_id, "Data Ingested", completed_stages)
-            time.sleep(0.35)  # Real operational pacing
+            time.sleep(1.2)  # Increased from 0.35s for visual pacing
 
             with get_db() as conn:
                 cur = conn.cursor()
@@ -132,13 +132,13 @@ class StationAdaptiveTrainingService:
                 
             completed_stages.append("Data Ingested")
             update_training_job_stage(job_id, "Data Ingested", completed_stages)
-            time.sleep(0.2)
+            time.sleep(0.3)  # Paced stage completion transition
             
             # -----------------------------------------------------------------
             # 2. Data Validated
             # -----------------------------------------------------------------
             update_training_job_stage(job_id, "Data Validated", completed_stages)
-            time.sleep(0.35)
+            time.sleep(1.2)
 
             valid_rows, scrubbed = self.pipeline.preprocess_dataset(formatted_rows)
             if len(valid_rows) < 20:
@@ -149,37 +149,37 @@ class StationAdaptiveTrainingService:
 
             completed_stages.append("Data Validated")
             update_training_job_stage(job_id, "Data Validated", completed_stages)
-            time.sleep(0.2)
+            time.sleep(0.3)
             
             # -----------------------------------------------------------------
             # 3. Data Preprocessed
             # -----------------------------------------------------------------
             update_training_job_stage(job_id, "Data Preprocessed", completed_stages)
-            time.sleep(0.35)
+            time.sleep(1.2)
 
             valid_rows = sorted(valid_rows, key=lambda x: x.get("timestamp", ""))
 
             completed_stages.append("Data Preprocessed")
             update_training_job_stage(job_id, "Data Preprocessed", completed_stages)
-            time.sleep(0.2)
+            time.sleep(0.3)
             
             # -----------------------------------------------------------------
             # 4. Features Generated
             # -----------------------------------------------------------------
             update_training_job_stage(job_id, "Features Generated", completed_stages)
-            time.sleep(0.35)
+            time.sleep(1.2)
 
             X, norm_stats = self.pipeline.engineer_features(valid_rows)
 
             completed_stages.append("Features Generated")
             update_training_job_stage(job_id, "Features Generated", completed_stages)
-            time.sleep(0.2)
+            time.sleep(0.3)
             
             # -----------------------------------------------------------------
             # 5. Training Isolation Forest
             # -----------------------------------------------------------------
             update_training_job_stage(job_id, "Training Isolation Forest", completed_stages)
-            time.sleep(0.35)
+            time.sleep(1.2)
 
             sub_size = min(128, len(valid_rows))
             iforest = IsolationForest(n_trees=50, sub_sample_size=sub_size, random_seed=42)
@@ -187,13 +187,13 @@ class StationAdaptiveTrainingService:
 
             completed_stages.append("Training Isolation Forest")
             update_training_job_stage(job_id, "Training Isolation Forest", completed_stages)
-            time.sleep(0.2)
+            time.sleep(0.3)
             
             # -----------------------------------------------------------------
             # 6. Model Evaluation
             # -----------------------------------------------------------------
             update_training_job_stage(job_id, "Model Evaluation", completed_stages)
-            time.sleep(0.35)
+            time.sleep(1.2)
 
             model_id = f"{clean_id}_IF_{target_version.replace('.', '_')}"
             sha_hash = hashlib.sha256(f"{clean_id}_{target_version}_{iforest.threshold}".encode()).hexdigest()
@@ -237,13 +237,13 @@ class StationAdaptiveTrainingService:
 
             completed_stages.append("Model Evaluation")
             update_training_job_stage(job_id, "Model Evaluation", completed_stages)
-            time.sleep(0.2)
+            time.sleep(0.3)
             
             # -----------------------------------------------------------------
             # 7. Model Registered
             # -----------------------------------------------------------------
             update_training_job_stage(job_id, "Model Registered", completed_stages)
-            time.sleep(0.35)
+            time.sleep(1.2)
 
             reg_entry = register_trained_model(
                 station_id=clean_id,
@@ -254,13 +254,13 @@ class StationAdaptiveTrainingService:
 
             completed_stages.append("Model Registered")
             update_training_job_stage(job_id, "Model Registered", completed_stages)
-            time.sleep(0.2)
+            time.sleep(0.3)
             
             # -----------------------------------------------------------------
             # 8. Model Activated
             # -----------------------------------------------------------------
             update_training_job_stage(job_id, "Model Activated", completed_stages)
-            time.sleep(0.35)
+            time.sleep(1.2)
 
             # Auto-calibrate Station Normal QC Physics Matrix
             try:

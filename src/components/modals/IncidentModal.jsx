@@ -141,13 +141,13 @@ export const IncidentModal = ({ incident, onClose }) => {
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ color: 'var(--text-muted)' }}>Target vs Peer:</span>
                       <span style={{ color: 'var(--text-primary)' }}>
-                        {spatialEv.target_temperature !== undefined ? `${spatialEv.target_temperature}°C` : 'N/A'} vs {peerTemp !== null ? `${peerTemp}°C` : 'N/A'}
+                        {spatialEv.target_temperature !== undefined ? `${spatialEv.target_temperature}${sensorQC.unit || '°C'}` : 'N/A'} vs {peerTemp !== null ? `${peerTemp}${sensorQC.unit || '°C'}` : 'N/A'}
                       </span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ color: 'var(--text-muted)' }}>Spatial Deviation:</span>
                       <span style={{ fontWeight: 600, color: spatialEv.spatial_deviation > 3.0 ? 'var(--crimson-alert)' : 'var(--text-primary)' }}>
-                        {spatialEv.spatial_deviation}°C
+                        {spatialEv.spatial_deviation}{sensorQC.unit || '°C'}
                       </span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px', marginTop: '2px' }}>
@@ -197,14 +197,14 @@ export const IncidentModal = ({ incident, onClose }) => {
                   <span style={{ color: 'var(--text-muted)' }}>Normal Envelope:</span>
                   <span style={{ color: 'var(--text-primary)' }}>
                     {sensorQC.station_normal_min !== null && sensorQC.station_normal_min !== undefined
-                      ? `${sensorQC.station_normal_min}°C – ${sensorQC.station_normal_max}°C`
+                      ? `${sensorQC.station_normal_min}${sensorQC.unit || '°C'} – ${sensorQC.station_normal_max}${sensorQC.unit || '°C'}`
                       : 'Not Calibrated'}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: 'var(--text-muted)' }}>Observed Value:</span>
                   <span style={{ fontWeight: 600, color: sensorQC.qc_result === 'OUTSIDE_NORMAL_ENVELOPE' ? 'var(--crimson-alert)' : 'var(--text-primary)' }}>
-                    {sensorQC.observed_value !== undefined ? `${sensorQC.observed_value}°C` : 'N/A'}
+                    {sensorQC.observed_value !== undefined ? `${sensorQC.observed_value}${sensorQC.unit || '°C'}` : 'N/A'}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>

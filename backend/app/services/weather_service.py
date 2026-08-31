@@ -132,7 +132,7 @@ class WeatherService:
                 elif f_type == "DRIFT":
                     temp += f_offset
                 elif f_type == "FLATLINE":
-                    pass 
+                    temp = 24.0
                 elif f_type == "POWER":
                     battery = 10.8
                     signal = -98
@@ -157,6 +157,8 @@ class WeatherService:
             if temp < -50 or temp > 60 or hum < 0 or hum > 100 or pres < 800 or pres > 1200:
                 qc_state = "SUSPECT"
             if battery < 11.0 or signal < -95:
+                qc_state = "SUSPECT"
+            if fault and fault.get("fault_type") == "FLATLINE":
                 qc_state = "SUSPECT"
             
             # Level 2: Station-Specific Normal Envelope (Fallback gracefully if uncalibrated)
@@ -285,12 +287,84 @@ class WeatherService:
                 logger.warning(f"Could not fetch QC config for incident creation on {st_id}: {err}")
 
             obs_temp = float(state["sensors"]["temperature"]["value"])
+            obs_hum  = float(state["sensors"]["humidity"]["value"])
+            obs_pres = float(state["sensors"]["pressure"]["value"])
+            obs_wind = float(state["sensors"]["wind_speed"]["value"])
+
+            qc_violations: list = []   # Tracks every violated envelope parameter
             qc_envelope_breached = False
+
+            # Explicitly append flatline violation if flatline fault is active
+            if fault and fault.get("fault_type") == "FLATLINE":
+                qc_envelope_breached = True
+                t_min = qc_conf.get("temperature_normal_min") if qc_conf else None
+                t_max = qc_conf.get("temperature_normal_max") if qc_conf else None
+                qc_violations.append({
+                    "parameter": "temperature",
+                    "value": obs_temp,
+                    "normal_min": round(float(t_min), 2) if t_min is not None else None,
+                    "normal_max": round(float(t_max), 2) if t_max is not None else None,
+                    "unit": "°C",
+                    "reason": "FLATLINE"
+                })
+
             if qc_conf:
+                # Temperature envelope
                 t_min = qc_conf.get("temperature_normal_min")
                 t_max = qc_conf.get("temperature_normal_max")
                 if (t_min is not None and obs_temp < float(t_min)) or (t_max is not None and obs_temp > float(t_max)):
                     qc_envelope_breached = True
+                    qc_violations.append({
+                        "parameter": "temperature",
+                        "value": obs_temp,
+                        "normal_min": round(float(t_min), 2) if t_min is not None else None,
+                        "normal_max": round(float(t_max), 2) if t_max is not None else None,
+                        "unit": "\u00b0C",
+                        "reason": "outside_station_normal_envelope"
+                    })
+
+                # Humidity envelope
+                h_min = qc_conf.get("humidity_normal_min")
+                h_max = qc_conf.get("humidity_normal_max")
+                if (h_min is not None and obs_hum < float(h_min)) or (h_max is not None and obs_hum > float(h_max)):
+                    qc_envelope_breached = True
+                    qc_violations.append({
+                        "parameter": "humidity",
+                        "value": obs_hum,
+                        "normal_min": round(float(h_min), 2) if h_min is not None else None,
+                        "normal_max": round(float(h_max), 2) if h_max is not None else None,
+                        "unit": "%",
+                        "reason": "outside_station_normal_envelope"
+                    })
+
+                # Pressure envelope
+                p_min = qc_conf.get("pressure_normal_min")
+                p_max = qc_conf.get("pressure_normal_max")
+                if (p_min is not None and obs_pres < float(p_min)) or (p_max is not None and obs_pres > float(p_max)):
+                    qc_envelope_breached = True
+                    qc_violations.append({
+                        "parameter": "pressure",
+                        "value": obs_pres,
+                        "normal_min": round(float(p_min), 2) if p_min is not None else None,
+                        "normal_max": round(float(p_max), 2) if p_max is not None else None,
+                        "unit": "hPa",
+                        "reason": "outside_station_normal_envelope"
+                    })
+
+                # Wind speed envelope
+                w_min = qc_conf.get("wind_normal_min")
+                w_max = qc_conf.get("wind_normal_max")
+                if w_min is not None and w_max is not None and float(w_max) > float(w_min):
+                    if obs_wind < float(w_min) or obs_wind > float(w_max):
+                        qc_envelope_breached = True
+                        qc_violations.append({
+                            "parameter": "wind_speed",
+                            "value": obs_wind,
+                            "normal_min": round(float(w_min), 2),
+                            "normal_max": round(float(w_max), 2),
+                            "unit": "km/h",
+                            "reason": "outside_station_normal_envelope"
+                        })
 
             # 2. Spatial Consensus Logic & Evaluation (Safe Fallbacks when isolated)
             median_temp = None
@@ -384,8 +458,22 @@ class WeatherService:
                         score_val = ml_res.get("anomaly_score")
                         score_str = f"{round(float(score_val), 3)}" if score_val is not None else "DETECTED"
                         reasons.append(f"ML_SCORE_{score_str}")
-                    if qc_envelope_breached:
+                    
+                    if fault:
+                        f_type = fault.get("fault_type")
+                        if f_type == "SPIKE":
+                            reasons.append("RATE_FAIL")
+                        elif f_type == "DRIFT":
+                            reasons.append("DRIFT")
+                        elif f_type == "FLATLINE":
+                            reasons.append("FLATLINE")
+                        elif f_type == "POWER":
+                            reasons.append("POWER_LOW")
+                        elif f_type == "STORM":
+                            reasons.append("STORM_SIGNATURE")
+                    elif qc_envelope_breached:
                         reasons.append("QC_ENVELOPE_BREACH")
+                        
                     if classification == "LOCALIZED_ANOMALY":
                         reasons.append("SPATIAL_DISCORDANCE")
                     elif classification == "REGIONAL_EVENT":
@@ -393,11 +481,23 @@ class WeatherService:
                     if not reasons:
                         reasons.append("PHYSICAL_QC_THRESHOLD_BREACH")
 
-                    var_name = "air_temperature"
+                    # Derive primary variable from active fault first, then QC violations, then default
+                    _var_map = {
+                        "temperature": "air_temperature",
+                        "humidity":    "relative_humidity",
+                        "pressure":    "surface_pressure",
+                        "wind_speed":  "wind_speed"
+                    }
                     if fault and fault.get("fault_type") == "STORM":
                         var_name = "precipitation"
                     elif fault and fault.get("fault_type") == "POWER":
                         var_name = "battery_voltage"
+                    elif fault and fault.get("fault_type") in ["SPIKE", "DRIFT", "FLATLINE"]:
+                        var_name = "air_temperature"
+                    elif qc_violations:
+                        var_name = _var_map.get(qc_violations[0]["parameter"], "air_temperature")
+                    else:
+                        var_name = "air_temperature"
 
                     exp = interpretation
                     if ml_res and ml_res.get("is_anomaly"):
@@ -442,17 +542,40 @@ class WeatherService:
                         "summary": "Neighborhood contradicts reading" if spatially_consistent is False else ("Validated by peers" if spatially_consistent is True else "No nearby stations available within 60 km radius. Spatial validation unavailable.")
                     }
 
-                    # 3. Sensor / QC Evidence
-                    q_min = qc_conf.get("temperature_normal_min") if qc_conf else None
-                    q_max = qc_conf.get("temperature_normal_max") if qc_conf else None
+                    # 3. Sensor / QC Evidence — report the primary violating variable
+                    #    Falls back to temperature if no envelope violation was found.
+                    _primary = qc_violations[0] if qc_violations else None
+                    _obs_val = _primary["value"] if _primary else obs_temp
+                    _unit    = _primary["unit"]  if _primary else state["sensors"]["temperature"]["unit"]
+                    _q_min   = _primary["normal_min"] if _primary else (round(float(qc_conf.get("temperature_normal_min")), 2) if (qc_conf and qc_conf.get("temperature_normal_min") is not None) else None)
+                    _q_max   = _primary["normal_max"] if _primary else (round(float(qc_conf.get("temperature_normal_max")), 2) if (qc_conf and qc_conf.get("temperature_normal_max") is not None) else None)
+
+                    if fault:
+                        f_type = fault.get("fault_type")
+                        if f_type == "POWER":
+                            _obs_val = round(float(state["battery"]), 2)
+                            _unit = "V"
+                            _q_min = 11.0
+                            _q_max = 15.0
+                        elif f_type == "STORM":
+                            _obs_val = round(float(state["sensors"]["rainfall"]["value"]), 1)
+                            _unit = "mm"
+                            _q_min = 0.0
+                            _q_max = 10.0
                     sensor_qc_evidence = {
                         "variable": var_name,
-                        "observed_value": obs_temp,
-                        "unit": state["sensors"]["temperature"]["unit"],
-                        "station_normal_min": round(float(q_min), 2) if q_min is not None else None,
-                        "station_normal_max": round(float(q_max), 2) if q_max is not None else None,
+                        "observed_value": _obs_val,
+                        "unit": _unit,
+                        "station_normal_min": _q_min,
+                        "station_normal_max": _q_max,
                         "qc_result": "OUTSIDE_NORMAL_ENVELOPE" if qc_envelope_breached else "WITHIN_NORMAL_ENVELOPE",
-                        "physical_qc": "SUSPECT" if (state["battery"] < 11.0 or state["signal"] < -95 or obs_temp < -50 or obs_temp > 60) else "PASS",
+                        "qc_violations": qc_violations,
+                        "physical_qc": "SUSPECT" if (
+                            state["battery"] < 11.0 or state["signal"] < -95
+                            or obs_temp < -50 or obs_temp > 60
+                            or obs_hum < 0 or obs_hum > 100
+                            or obs_pres < 800 or obs_pres > 1200
+                        ) else "PASS",
                         "fault_state": f"{fault.get('fault_type')} INJECTED" if fault else "NONE_DETECTED",
                         "fault_type": fault.get("fault_type") if fault else None,
                         "battery": round(float(state["battery"]), 2),
