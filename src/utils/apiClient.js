@@ -4,7 +4,8 @@
  * Handles authenticated communication with the FastAPI / Cloud PostgreSQL backend service.
  */
 
-const API_BASE = "/api/v1";
+const API_ROOT = import.meta.env.VITE_API_BASE_URL ? import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '') : '';
+const API_BASE = `${API_ROOT}/api/v1`;
 
 class ApiClient {
   constructor() {
