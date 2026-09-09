@@ -643,6 +643,38 @@ def init_db():
             """, (DEFAULT_ADMIN_USERNAME.lower(), pwd_hash, DEFAULT_ADMIN_NAME, now_iso, now_iso))
             print(f"[Database] Seeded Central Admin: '{DEFAULT_ADMIN_USERNAME}'")
 
+        # Seed standard Indian AWS fleet stations so foreign key relationships are always valid
+        preset_stations = [
+            ("AWS-07", "Hyderabad AWS", "Telangana Deccan", 17.3850, 78.4867, 542.0),
+            ("AWS-12", "Mumbai Coastal AWS", "Maharashtra Coast", 19.0760, 72.8777, 14.0),
+            ("AWS-19", "Cherrapunji AWS", "Meghalaya Hills", 25.2986, 91.5822, 1313.0),
+            ("AWS-01", "Delhi Central AWS", "NCR Northern Plains", 28.6139, 77.2090, 216.0),
+            ("AWS-04", "Bengaluru Urban AWS", "Karnataka Plateau", 12.9716, 77.5946, 920.0),
+            ("AWS-21", "Shimla Ridge AWS", "Himachal Himalayas", 31.1048, 77.1734, 2276.0),
+            ("AWS-15", "Chennai Port AWS", "Tamil Nadu Coast", 13.0827, 80.2707, 7.0),
+            ("AWS-09", "Kolkata Alipore AWS", "West Bengal Delta", 22.5726, 88.3639, 9.0),
+            ("AWS-02", "Pune Valley AWS", "Maharashtra Ghats", 18.5204, 73.8567, 560.0),
+        ]
+        default_pwd_hash = hash_password("sentinel2026")
+        for s_id, s_name, s_reg, s_lat, s_lon, s_elev in preset_stations:
+            u_name = f"op_{s_id.lower().replace('-', '_')}"
+            if conn.is_postgres:
+                cur.execute("""
+                    INSERT INTO stations (
+                        station_id, station_name, username, password_hash, access_key,
+                        latitude, longitude, elevation, region, status, created_by, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, 'sentinel2026', %s, %s, %s, %s, 'ACTIVE', 'admin', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (station_id) DO NOTHING;
+                """, (s_id, s_name, u_name, default_pwd_hash, s_lat, s_lon, s_elev, s_reg))
+            else:
+                cur.execute("""
+                    INSERT OR IGNORE INTO stations (
+                        station_id, station_name, username, password_hash, access_key,
+                        latitude, longitude, elevation, region, status, created_by, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 'sentinel2026', ?, ?, ?, ?, 'ACTIVE', 'admin', ?, ?);
+                """, (s_id, s_name, u_name, default_pwd_hash, s_lat, s_lon, s_elev, s_reg, now_iso, now_iso))
+
+
 
 
 
@@ -1029,16 +1061,59 @@ def get_training_job(job_id: int) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
+def ensure_station_exists(station_id: str, station_name: Optional[str] = None, conn: Optional[Any] = None):
+    """
+    Idempotently ensures a station record exists in the database.
+    Prevents foreign key violation crashes when receiving telemetry or injecting faults
+    on new, preset, or dynamically provisioned weather stations.
+    """
+    clean_id = station_id.strip().upper()
+    name = station_name or f"{clean_id} Weather Station"
+    uname = f"op_{clean_id.lower().replace('-', '_')}"
+    pwd_hash = hash_password("sentinel2026")
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    
+    def _execute(c):
+        cur = c.cursor()
+        if c.is_postgres:
+            cur.execute("""
+                INSERT INTO stations (
+                    station_id, station_name, username, password_hash, access_key,
+                    latitude, longitude, elevation, region, status, created_by, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, 'sentinel2026', 17.3850, 78.4867, 500.0, 'General', 'ACTIVE', 'system', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (station_id) DO NOTHING;
+            """, (clean_id, name, uname, pwd_hash))
+        else:
+            cur.execute("""
+                INSERT OR IGNORE INTO stations (
+                    station_id, station_name, username, password_hash, access_key,
+                    latitude, longitude, elevation, region, status, created_by, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 'sentinel2026', 17.3850, 78.4867, 500.0, 'General', 'ACTIVE', 'system', ?, ?);
+            """, (clean_id, name, uname, pwd_hash, now_iso, now_iso))
+
+    if conn is not None:
+        _execute(conn)
+    else:
+        with get_db() as c:
+            _execute(c)
+
+
 def set_active_fault(station_id: str, fault_type: str, offset_val: Optional[float] = None):
     clean_id = station_id.strip().upper()
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     with get_db() as conn:
+        ensure_station_exists(clean_id, conn=conn)
         cur = conn.cursor()
-        cur.execute("DELETE FROM active_faults WHERE station_id = ?", (clean_id,))
+        cur.execute("DELETE FROM active_faults WHERE station_id = %s" if conn.is_postgres else "DELETE FROM active_faults WHERE station_id = ?", (clean_id,))
         cur.execute("""
+            INSERT INTO active_faults (station_id, fault_type, offset_val, injected_at)
+            VALUES (%s, %s, %s, %s)
+        """ if conn.is_postgres else """
             INSERT INTO active_faults (station_id, fault_type, offset_val, injected_at)
             VALUES (?, ?, ?, ?)
         """, (clean_id, fault_type, offset_val, now_iso))
+
+
 
 
 def clear_active_fault(station_id: str):
@@ -1236,7 +1311,9 @@ def create_or_update_incident(incident_data: Dict[str, Any]) -> Dict[str, Any]:
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     
     with get_db() as conn:
+        ensure_station_exists(station_id, incident_data.get("station_name"), conn=conn)
         cur = conn.cursor()
+
         if conn.is_postgres:
             cur.execute(
                 "SELECT * FROM incidents WHERE station_id = %s AND status = 'open' LIMIT 1",
