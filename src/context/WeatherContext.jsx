@@ -18,6 +18,7 @@ import { useAuth } from './AuthContext';
 import { apiClient } from '../utils/apiClient';
 
 const STATIONS_CACHE_KEY = "skyguard_stations_cache_v3";
+const INCIDENTS_CACHE_KEY = "skyguard_incidents_cache_v3";
 const WeatherContext = createContext(null);
 
 export const WeatherProvider = ({ children }) => {
@@ -39,7 +40,27 @@ export const WeatherProvider = ({ children }) => {
     return [];
   });
 
-  const [incidents, setIncidents] = useState(() => JSON.parse(JSON.stringify(SEED_INCIDENTS)));
+  // Initialize incidents from persistent localStorage cache so reload never wipes triage
+  const [incidents, setIncidents] = useState(() => {
+    try {
+      const saved = localStorage.getItem(INCIDENTS_CACHE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return JSON.parse(JSON.stringify(SEED_INCIDENTS));
+  });
+
+  const saveIncidents = useCallback((newIncidents) => {
+    setIncidents(newIncidents);
+    try {
+      if (Array.isArray(newIncidents)) {
+        localStorage.setItem(INCIDENTS_CACHE_KEY, JSON.stringify(newIncidents));
+      }
+    } catch (e) {}
+  }, []);
+
   const [qcConfig, setQcConfig] = useState(() => ({ ...INITIAL_QC_CONFIG }));
   const [modelRegistry, setModelRegistry] = useState(() => [...INITIAL_MODEL_REGISTRY]);
   
@@ -301,11 +322,12 @@ export const WeatherProvider = ({ children }) => {
         try {
           const incRes = await apiClient.getIncidents();
           if (incRes && incRes.success && Array.isArray(incRes.incidents)) {
-            setIncidents(incRes.incidents);
+            saveIncidents(incRes.incidents);
           }
         } catch (incErr) {
           console.warn("[WeatherContext] Incidents fetch skipped/failed:", incErr.message);
         }
+
         
         setLiveApiStatus({
           isOnline: true,
@@ -421,13 +443,23 @@ export const WeatherProvider = ({ children }) => {
             syncLiveOpenMeteoData(formatted);
           }
         }
+        // Immediately hydrate authoritative incidents on mount/reload
+        try {
+          const incRes = await apiClient.getIncidents();
+          if (incRes && incRes.success && Array.isArray(incRes.incidents)) {
+            saveIncidents(incRes.incidents);
+          }
+        } catch (incErr) {
+          console.warn("[WeatherContext] Mount incident hydration warning:", incErr.message);
+        }
       } catch (err) {
         console.warn("[WeatherContext] Hydration Warning:", err.message);
       }
     };
 
     hydrateFromBackend();
-  }, [session?.isAuthenticated, role, assignedStationId, isStationOperator, isCentralAdmin, syncLiveOpenMeteoData]);
+  }, [session?.isAuthenticated, role, assignedStationId, isStationOperator, isCentralAdmin, syncLiveOpenMeteoData, saveIncidents]);
+
 
   // (Removed redundant legacy interval and initial load sync hooks here; 
   // polling is now managed entirely by the 5-second interval below)
@@ -498,7 +530,16 @@ export const WeatherProvider = ({ children }) => {
     try {
       await apiClient.injectFault(stationId, faultType, offset);
       tacticalAudio.playAlarm();
-      syncLiveOpenMeteoData(); // Refresh immediately
+      
+      // Instantly query updated incidents and live fleet state
+      try {
+        const incRes = await apiClient.getIncidents();
+        if (incRes?.success && Array.isArray(incRes.incidents)) {
+          saveIncidents(incRes.incidents);
+        }
+      } catch (e) {}
+      
+      syncLiveOpenMeteoData();
     } catch(e) {
       console.error("[WeatherContext] Failed to inject fault:", e);
     }
@@ -508,7 +549,15 @@ export const WeatherProvider = ({ children }) => {
     try {
       await apiClient.resetFault(stationId);
       tacticalAudio.playClick();
-      syncLiveOpenMeteoData(); // Refresh immediately
+      
+      try {
+        const incRes = await apiClient.getIncidents();
+        if (incRes?.success && Array.isArray(incRes.incidents)) {
+          saveIncidents(incRes.incidents);
+        }
+      } catch (e) {}
+      
+      syncLiveOpenMeteoData();
     } catch(e) {
       console.error("[WeatherContext] Failed to clear fault:", e);
     }
@@ -520,24 +569,31 @@ export const WeatherProvider = ({ children }) => {
       tacticalAudio.playSuccess();
       const incRes = await apiClient.getIncidents();
       if (incRes?.success && Array.isArray(incRes.incidents)) {
-        setIncidents(incRes.incidents);
+        saveIncidents(incRes.incidents);
       }
     } catch (e) {
       console.warn("[WeatherContext] Backend adjudication error, falling back locally:", e.message);
-      setIncidents(prev => prev.map(inc => {
-        if (inc.id === incidentId) {
-          return {
-            ...inc,
-            status: action === 'ACCEPT' || action === 'GENUINE' ? 'resolved' : action === 'ACKNOWLEDGE' ? 'acknowledged' : 'rejected',
-            adjudicated_at: new Date().toISOString(),
-            action_taken: action
-          };
-        }
-        return inc;
-      }));
+      setIncidents(prev => {
+        const next = prev.map(inc => {
+          if (inc.id === incidentId) {
+            return {
+              ...inc,
+              status: action === 'ACCEPT' || action === 'GENUINE' ? 'resolved' : action === 'ACKNOWLEDGE' ? 'acknowledged' : 'rejected',
+              adjudicated_at: new Date().toISOString(),
+              action_taken: action
+            };
+          }
+          return inc;
+        });
+        try {
+          localStorage.setItem(INCIDENTS_CACHE_KEY, JSON.stringify(next));
+        } catch (err) {}
+        return next;
+      });
       tacticalAudio.playSuccess();
     }
   };
+
 
   const updateChecklist = (stationId, itemId, completed) => {
     if (!stationId) return;

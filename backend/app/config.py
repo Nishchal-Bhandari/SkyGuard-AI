@@ -39,6 +39,7 @@ DATABASE_SSL_MODE = os.getenv("DATABASE_SSL_MODE", "require")
 
 IS_POSTGRES = DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("postgresql+psycopg2://")
 
+
 # Model Artifacts Storage
 MODEL_STORAGE_PATH = Path(os.getenv("MODEL_STORAGE_PATH", str(PROJECT_ROOT / "ml" / "models")))
 MODEL_STORAGE_PATH.mkdir(parents=True, exist_ok=True)

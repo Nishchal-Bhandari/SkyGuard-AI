@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from backend.app.config import IS_POSTGRES
 from backend.app.storage.database import init_db
+
 from backend.app.api.v1.auth import router as auth_router
 from backend.app.api.v1.stations import router as stations_router
 from backend.app.api.v1.telemetry import router as telemetry_router

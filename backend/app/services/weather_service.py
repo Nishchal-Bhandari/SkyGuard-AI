@@ -84,27 +84,35 @@ class WeatherService:
         except Exception as e:
             logger.error(f"Failed to fetch from Open-Meteo: {e}")
 
-        self.reevaluate(stations)
+        await asyncio.to_thread(self.reevaluate, stations)
+
 
     def reevaluate(self, stations: Optional[List[Dict[str, Any]]] = None):
-        if not stations:
-            try:
-                with get_db() as conn:
-                    cur = conn.cursor()
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                if not stations:
                     cur.execute("SELECT * FROM stations")
                     stations = [dict(row) for row in cur.fetchall()]
-            except Exception as e:
-                logger.error(f"[WEATHER SERVICE] Failed to query stations from database: {e}", exc_info=True)
-                return
+
+                cur.execute("SELECT * FROM active_faults")
+                active_faults = {r["station_id"]: dict(r) for r in cur.fetchall()}
+
+                cur.execute("SELECT * FROM station_qc_config")
+                all_qc_configs = {r["station_id"]: dict(r) for r in cur.fetchall()}
+
+                cur.execute("SELECT * FROM model_registry WHERE status = 'ACTIVE' ORDER BY id DESC")
+                all_models = {}
+                for r in cur.fetchall():
+                    sid = r["station_id"]
+                    if sid not in all_models:
+                        all_models[sid] = dict(r)
+        except Exception as e:
+            logger.error(f"[WEATHER SERVICE] Failed to query fleet metadata from database: {e}", exc_info=True)
+            return
 
         if not stations:
             return
-
-        try:
-            active_faults = get_all_active_faults() or {}
-        except Exception as e:
-            logger.warning(f"[WEATHER SERVICE] Could not load active faults: {e}")
-            active_faults = {}
 
         new_state = {}
 
@@ -162,11 +170,7 @@ class WeatherService:
                 qc_state = "SUSPECT"
             
             # Level 2: Station-Specific Normal Envelope (Fallback gracefully if uncalibrated)
-            qc_config = None
-            try:
-                qc_config = get_station_qc_config(st_id)
-            except Exception as e:
-                logger.warning(f"Could not load QC config for {st_id}: {e}")
+            qc_config = all_qc_configs.get(st_id)
 
             if qc_config and qc_state == "NORMAL":
                 t_min = qc_config.get("temperature_normal_min")
@@ -199,7 +203,7 @@ class WeatherService:
             # Level 3: Station-Specific Isolation Forest Scoring
             ml_result = None
             try:
-                model_record = get_active_model_record(st_id)
+                model_record = all_models.get(st_id)
                 if model_record:
                     ml_result = training_service.score_observation(
                         station_id=st_id,
@@ -207,6 +211,7 @@ class WeatherService:
                     )
             except Exception as e:
                 logger.error(f"ML Scoring failed for {st_id}: {e}")
+
 
             # Safe ML Fallback for untrained or non-modeled stations
             if not ml_result or not isinstance(ml_result, dict):
@@ -280,11 +285,8 @@ class WeatherService:
             nearby_stations.sort(key=lambda x: x["distance_km"])
             
             # 1. Evaluate QC Evidence Early
-            qc_conf = None
-            try:
-                qc_conf = get_station_qc_config(st_id)
-            except Exception as err:
-                logger.warning(f"Could not fetch QC config for incident creation on {st_id}: {err}")
+            qc_conf = all_qc_configs.get(st_id)
+
 
             obs_temp = float(state["sensors"]["temperature"]["value"])
             obs_hum  = float(state["sensors"]["humidity"]["value"])

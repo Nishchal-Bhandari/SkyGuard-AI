@@ -41,7 +41,7 @@ def inject_fault(
         raise HTTPException(status_code=400, detail="fault_type is required")
         
     set_active_fault(clean_id, fault_type, offset_val)
-    weather_service.reevaluate()
+    background_tasks.add_task(weather_service.reevaluate)
     
     return {
         "success": True,
@@ -54,6 +54,7 @@ def inject_fault(
 @router.post("/stations/{station_id}/faults/reset")
 def reset_fault(
     station_id: str,
+    background_tasks: BackgroundTasks,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
@@ -72,13 +73,14 @@ def reset_fault(
             )
             
     clear_active_fault(clean_id)
-    weather_service.reevaluate()
+    background_tasks.add_task(weather_service.reevaluate)
     
     return {
         "success": True,
         "station_id": clean_id,
         "message": f"Successfully reset faults on {clean_id}"
     }
+
 
 
 @router.get("/stations/{station_id}/faults")
