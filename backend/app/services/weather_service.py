@@ -17,6 +17,12 @@ from backend.app.storage.database import (
 )
 from backend.app.services.training_service import training_service
 
+# Import Enhanced SkyGuard ML & Physics Engines
+from ml.thermo_engine import thermo_engine
+from ml.root_cause_classifier import root_cause_classifier
+from ml.imputation_engine import imputation_engine
+from ml.sensor_health import sensor_health_engine
+
 logger = logging.getLogger("skyguard.weather_service")
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -96,15 +102,15 @@ class WeatherService:
                     stations = [dict(row) for row in cur.fetchall()]
 
                 cur.execute("SELECT * FROM active_faults")
-                active_faults = {r["station_id"]: dict(r) for r in cur.fetchall()}
+                active_faults = {str(r["station_id"]).strip().upper(): dict(r) for r in cur.fetchall()}
 
                 cur.execute("SELECT * FROM station_qc_config")
-                all_qc_configs = {r["station_id"]: dict(r) for r in cur.fetchall()}
+                all_qc_configs = {str(r["station_id"]).strip().upper(): dict(r) for r in cur.fetchall()}
 
                 cur.execute("SELECT * FROM model_registry WHERE status = 'ACTIVE' ORDER BY id DESC")
                 all_models = {}
                 for r in cur.fetchall():
-                    sid = r["station_id"]
+                    sid = str(r["station_id"]).strip().upper()
                     if sid not in all_models:
                         all_models[sid] = dict(r)
         except Exception as e:
@@ -116,9 +122,11 @@ class WeatherService:
 
         new_state = {}
 
+        # First Pass: Compute Physical & Thermodynamic QC, ML Scoring, and Local Health
         for station in stations:
             st_id = str(station["station_id"]).strip().upper()
             current = self._cached_base_readings.get(st_id, {})
+            elev = float(station.get("elevation", 0) or 0)
             
             # Base Open-Meteo readings (fallback to nominal if not yet populated)
             temp = float(current.get("temperature_2m", 26.5))
@@ -127,10 +135,12 @@ class WeatherService:
             wind = float(current.get("wind_speed_10m", 10.0))
             rain = float(current.get("precipitation", 0.0))
             
-            # Active Faults
+            # Active Faults Injection Simulation
             fault = active_faults.get(st_id)
             battery = 12.6 + (random.random() - 0.5) * 0.01
             signal = -72 + (1 if random.random() > 0.5 else -1) if random.random() > 0.8 else -72
+            drift_rate = 0.0
+            is_flatline = False
             
             if fault:
                 f_type = fault.get("fault_type")
@@ -139,8 +149,12 @@ class WeatherService:
                     temp += 8.5
                 elif f_type == "DRIFT":
                     temp += f_offset
+                    drift_rate = f_offset / 3.0
                 elif f_type == "FLATLINE":
                     temp = 24.0
+                    hum = 60.0
+                    pres = 1013.2
+                    is_flatline = True
                 elif f_type == "POWER":
                     battery = 10.8
                     signal = -98
@@ -149,6 +163,10 @@ class WeatherService:
                     wind += 30.0
                     hum = 98.0
                     pres -= 8.0
+
+            # Level 1: Thermodynamic & Physical Bounds Verification
+            thermo_valid, thermo_violations = thermo_engine.validate_thermodynamic_bounds(temp, pres, hum, elev)
+            derived_thermo = thermo_engine.compute_all_thermodynamic_features(temp, pres, hum, elev)
 
             # Assemble Observation for ML Scoring
             observation = {
@@ -160,47 +178,50 @@ class WeatherService:
                 "hour": 12
             }
 
-            # Level 1: Immutable Hard Physical QC Rules
+            # WMO Flag defaults: 0 (Good), 1 (Suspect), 2 (Erroneous), 3 (Imputed)
+            wmo_t_flag = 0
+            wmo_h_flag = 0
+            wmo_p_flag = 0
+
+            # Level 2: Immutable Hard Physical QC Rules
             qc_state = "NORMAL"
-            if temp < -50 or temp > 60 or hum < 0 or hum > 100 or pres < 800 or pres > 1200:
+            if not thermo_valid or temp < -50 or temp > 60 or hum < 0 or hum > 100 or pres < 800 or pres > 1200:
                 qc_state = "SUSPECT"
-            if battery < 11.0 or signal < -95:
+                if temp < -50 or temp > 60:
+                    wmo_t_flag = 2
+                if hum < 0 or hum > 100:
+                    wmo_h_flag = 2
+                if pres < 800 or pres > 1200:
+                    wmo_p_flag = 2
+
+            if battery < 11.0 or signal < -95 or is_flatline:
                 qc_state = "SUSPECT"
-            if fault and fault.get("fault_type") == "FLATLINE":
-                qc_state = "SUSPECT"
+                if is_flatline:
+                    wmo_t_flag, wmo_h_flag, wmo_p_flag = 1, 1, 1
             
-            # Level 2: Station-Specific Normal Envelope (Fallback gracefully if uncalibrated)
+            # Level 3: Station-Specific Normal Envelope
             qc_config = all_qc_configs.get(st_id)
 
             if qc_config and qc_state == "NORMAL":
                 t_min = qc_config.get("temperature_normal_min")
                 t_max = qc_config.get("temperature_normal_max")
-                if t_min is not None and temp < float(t_min):
+                if (t_min is not None and temp < float(t_min)) or (t_max is not None and temp > float(t_max)):
                     qc_state = "SUSPECT"
-                if t_max is not None and temp > float(t_max):
-                    qc_state = "SUSPECT"
+                    wmo_t_flag = 1
                 
                 h_min = qc_config.get("humidity_normal_min")
                 h_max = qc_config.get("humidity_normal_max")
-                if h_min is not None and hum < float(h_min):
+                if (h_min is not None and hum < float(h_min)) or (h_max is not None and hum > float(h_max)):
                     qc_state = "SUSPECT"
-                if h_max is not None and hum > float(h_max):
-                    qc_state = "SUSPECT"
+                    wmo_h_flag = 1
                 
                 p_min = qc_config.get("pressure_normal_min")
                 p_max = qc_config.get("pressure_normal_max")
-                if p_min is not None and pres < float(p_min):
+                if (p_min is not None and pres < float(p_min)) or (p_max is not None and pres > float(p_max)):
                     qc_state = "SUSPECT"
-                if p_max is not None and pres > float(p_max):
-                    qc_state = "SUSPECT"
+                    wmo_p_flag = 1
 
-                w_min = qc_config.get("wind_normal_min")
-                w_max = qc_config.get("wind_normal_max")
-                if w_min is not None and w_max is not None and float(w_max) > float(w_min):
-                    if wind < float(w_min) or wind > float(w_max):
-                        qc_state = "SUSPECT"
-
-            # Level 3: Station-Specific Isolation Forest Scoring
+            # Level 4: Station-Specific Isolation Forest Scoring + TreeSHAP
             ml_result = None
             try:
                 model_record = all_models.get(st_id)
@@ -212,8 +233,7 @@ class WeatherService:
             except Exception as e:
                 logger.error(f"ML Scoring failed for {st_id}: {e}")
 
-
-            # Safe ML Fallback for untrained or non-modeled stations
+            # Safe ML Fallback for untrained stations
             if not ml_result or not isinstance(ml_result, dict):
                 ml_result = {
                     "station_id": st_id,
@@ -223,20 +243,34 @@ class WeatherService:
                     "status": "UNTRAINED",
                     "is_anomaly": False,
                     "anomaly_score": None,
-                    "threshold": None
+                    "threshold": None,
+                    "xai_explanation": None
                 }
             
             final_status = "NORMAL"
-            if battery < 11.0 or signal < -95:
+            if battery < 11.0 or signal < -95 or (not thermo_valid) or (fault and fault.get("fault_type") == "POWER"):
                 final_status = "CRITICAL"
-            elif (ml_result and ml_result.get("is_anomaly")) or qc_state == "SUSPECT":
+                wmo_t_flag = max(wmo_t_flag, 2 if not thermo_valid else 1)
+            elif (ml_result and ml_result.get("is_anomaly")) or qc_state == "SUSPECT" or fault is not None:
                 final_status = "ANOMALY"
+                if fault:
+                    f_type = fault.get("fault_type")
+                    if f_type == "SPIKE":
+                        wmo_t_flag = 2
+                    elif f_type == "DRIFT":
+                        wmo_t_flag = 1
+                    elif f_type == "FLATLINE":
+                        wmo_t_flag, wmo_h_flag, wmo_p_flag = 1, 1, 1
+                    elif f_type == "STORM":
+                        wmo_p_flag = 1
+                elif ml_result and ml_result.get("is_anomaly") and wmo_t_flag == 0:
+                    wmo_t_flag = 1
             
             new_state[st_id] = {
                 "station_id": st_id,
                 "station_name": station.get("station_name", st_id),
                 "region": station.get("region", "Region"),
-                "elevation": float(station.get("elevation", 0) or 0),
+                "elevation": elev,
                 "latitude": float(station["latitude"]),
                 "longitude": float(station["longitude"]),
                 "status": final_status,
@@ -244,20 +278,23 @@ class WeatherService:
                 "signal": signal,
                 "last_seen": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "sensors": {
-                    "temperature": {"value": round(float(temp), 1), "unit": "°C"},
-                    "humidity": {"value": round(float(hum), 1), "unit": "%"},
-                    "pressure": {"value": round(float(pres), 1), "unit": "hPa"},
-                    "wind_speed": {"value": round(float(wind), 1), "unit": "km/h"},
-                    "rainfall": {"value": round(float(rain), 1), "unit": "mm"},
+                    "temperature": {"value": round(float(temp), 1), "unit": "°C", "wmo_flag": wmo_t_flag, "status": "FLAG_GOOD" if wmo_t_flag == 0 else ("FLAG_SUSPECT" if wmo_t_flag == 1 else "FLAG_ERRONEOUS")},
+                    "humidity": {"value": round(float(hum), 1), "unit": "%", "wmo_flag": wmo_h_flag, "status": "FLAG_GOOD" if wmo_h_flag == 0 else ("FLAG_SUSPECT" if wmo_h_flag == 1 else "FLAG_ERRONEOUS")},
+                    "pressure": {"value": round(float(pres), 1), "unit": "hPa", "wmo_flag": wmo_p_flag, "status": "FLAG_GOOD" if wmo_p_flag == 0 else ("FLAG_SUSPECT" if wmo_p_flag == 1 else "FLAG_ERRONEOUS")},
+                    "wind_speed": {"value": round(float(wind), 1), "unit": "km/h", "wmo_flag": 0},
+                    "rainfall": {"value": round(float(rain), 1), "unit": "mm", "wmo_flag": 0},
                 },
+                "derived_thermodynamics": derived_thermo,
+                "thermodynamic_violations": thermo_violations,
                 "ml_model": ml_result,
                 "has_active_fault": fault is not None,
                 "fault_details": fault,
+                "drift_rate": drift_rate,
+                "is_flatline": is_flatline,
                 "spatial_data": {}
             }
 
-        # Second Pass: Spatial Consensus & Peer Adjudication
-        # Second Pass: Spatial Consensus, QC & Incident Adjudication
+        # Second Pass: Spatial Consensus, Root-Cause Classification, Imputation & Health
         for st_id, state in new_state.items():
             nearby_stations = []
             for other_id, other_state in new_state.items():
@@ -267,7 +304,7 @@ class WeatherService:
                     state["latitude"], state["longitude"],
                     other_state["latitude"], other_state["longitude"]
                 )
-                if dist <= 60.0:
+                if dist <= 800.0:
                     nearby_stations.append({
                         "id": other_state["station_id"],
                         "station_id": other_state["station_id"],
@@ -278,97 +315,67 @@ class WeatherService:
                         "temp": other_state["sensors"]["temperature"]["value"],
                         "temperature": other_state["sensors"]["temperature"]["value"],
                         "hum": other_state["sensors"]["humidity"]["value"],
+                        "pres": other_state["sensors"]["pressure"]["value"],
                         "status": other_state["status"]
                     })
             
-            # Sort by distance
+            # Sort by distance and retain closest peers
             nearby_stations.sort(key=lambda x: x["distance_km"])
+            nearby_stations = nearby_stations[:5]
             
-            # 1. Evaluate QC Evidence Early
+            # QC Evaluation
             qc_conf = all_qc_configs.get(st_id)
-
-
             obs_temp = float(state["sensors"]["temperature"]["value"])
             obs_hum  = float(state["sensors"]["humidity"]["value"])
             obs_pres = float(state["sensors"]["pressure"]["value"])
-            obs_wind = float(state["sensors"]["wind_speed"]["value"])
 
-            qc_violations: list = []   # Tracks every violated envelope parameter
+            qc_violations: list = []
             qc_envelope_breached = False
 
-            # Explicitly append flatline violation if flatline fault is active
-            if fault and fault.get("fault_type") == "FLATLINE":
+            if state.get("is_flatline"):
                 qc_envelope_breached = True
-                t_min = qc_conf.get("temperature_normal_min") if qc_conf else None
-                t_max = qc_conf.get("temperature_normal_max") if qc_conf else None
                 qc_violations.append({
                     "parameter": "temperature",
                     "value": obs_temp,
-                    "normal_min": round(float(t_min), 2) if t_min is not None else None,
-                    "normal_max": round(float(t_max), 2) if t_max is not None else None,
                     "unit": "°C",
-                    "reason": "FLATLINE"
+                    "reason": "FLATLINE_DETECTED"
                 })
 
             if qc_conf:
-                # Temperature envelope
                 t_min = qc_conf.get("temperature_normal_min")
                 t_max = qc_conf.get("temperature_normal_max")
                 if (t_min is not None and obs_temp < float(t_min)) or (t_max is not None and obs_temp > float(t_max)):
                     qc_envelope_breached = True
                     qc_violations.append({
-                        "parameter": "temperature",
-                        "value": obs_temp,
+                        "parameter": "temperature", "value": obs_temp,
                         "normal_min": round(float(t_min), 2) if t_min is not None else None,
                         "normal_max": round(float(t_max), 2) if t_max is not None else None,
-                        "unit": "\u00b0C",
-                        "reason": "outside_station_normal_envelope"
+                        "unit": "°C", "reason": "outside_station_normal_envelope"
                     })
 
-                # Humidity envelope
                 h_min = qc_conf.get("humidity_normal_min")
                 h_max = qc_conf.get("humidity_normal_max")
                 if (h_min is not None and obs_hum < float(h_min)) or (h_max is not None and obs_hum > float(h_max)):
                     qc_envelope_breached = True
                     qc_violations.append({
-                        "parameter": "humidity",
-                        "value": obs_hum,
+                        "parameter": "humidity", "value": obs_hum,
                         "normal_min": round(float(h_min), 2) if h_min is not None else None,
                         "normal_max": round(float(h_max), 2) if h_max is not None else None,
-                        "unit": "%",
-                        "reason": "outside_station_normal_envelope"
+                        "unit": "%", "reason": "outside_station_normal_envelope"
                     })
 
-                # Pressure envelope
                 p_min = qc_conf.get("pressure_normal_min")
                 p_max = qc_conf.get("pressure_normal_max")
                 if (p_min is not None and obs_pres < float(p_min)) or (p_max is not None and obs_pres > float(p_max)):
                     qc_envelope_breached = True
                     qc_violations.append({
-                        "parameter": "pressure",
-                        "value": obs_pres,
+                        "parameter": "pressure", "value": obs_pres,
                         "normal_min": round(float(p_min), 2) if p_min is not None else None,
                         "normal_max": round(float(p_max), 2) if p_max is not None else None,
-                        "unit": "hPa",
-                        "reason": "outside_station_normal_envelope"
+                        "unit": "hPa", "reason": "outside_station_normal_envelope"
                     })
 
-                # Wind speed envelope
-                w_min = qc_conf.get("wind_normal_min")
-                w_max = qc_conf.get("wind_normal_max")
-                if w_min is not None and w_max is not None and float(w_max) > float(w_min):
-                    if obs_wind < float(w_min) or obs_wind > float(w_max):
-                        qc_envelope_breached = True
-                        qc_violations.append({
-                            "parameter": "wind_speed",
-                            "value": obs_wind,
-                            "normal_min": round(float(w_min), 2),
-                            "normal_max": round(float(w_max), 2),
-                            "unit": "km/h",
-                            "reason": "outside_station_normal_envelope"
-                        })
-
-            # 2. Spatial Consensus Logic & Evaluation (Safe Fallbacks when isolated)
+            # Spatial Consensus Logic
             median_temp = None
             residual = None
             spatially_consistent = None
@@ -385,28 +392,74 @@ class WeatherService:
                 anomalous_peers = [p for p in nearby_stations if p.get("status") in ["ANOMALY", "CRITICAL", "REGIONAL_EVENT", "LOCALIZED_ANOMALY"]]
                 peer_anomaly_ratio = len(anomalous_peers) / len(nearby_stations)
                 
-                # Spatial Adjudication: only adjudicate true anomalies when peers exist
-                if state["status"] == "ANOMALY":
+                if state["status"] in ["ANOMALY", "SUSPECT"] or (residual is not None and residual > 3.5):
                     if spatially_consistent or peer_anomaly_ratio >= 0.4:
                         state["status"] = "REGIONAL_EVENT"
                     else:
                         state["status"] = "LOCALIZED_ANOMALY"
+                        state["sensors"]["temperature"]["wmo_flag"] = 2
+                        state["sensors"]["temperature"]["status"] = "FLAG_ERRONEOUS"
+
+            spatial_analysis_dict = {
+                "neighborhood_median_temp": round(float(median_temp), 1) if median_temp is not None else None,
+                "spatial_deviation_score": round(float(residual), 2) if residual is not None else 0.0,
+                "spatially_consistent": spatially_consistent if spatially_consistent is not None else None,
+                "peer_anomaly_ratio": round(float(peer_anomaly_ratio), 2),
+                "eligible_peer_count": len(nearby_stations)
+            }
 
             state["spatial_data"] = {
                 "search_radius_km": 60.0,
                 "nearby_stations": nearby_stations,
                 "eligible_peer_count": len(nearby_stations),
                 "fleet_station_count": len(new_state),
-                "spatial_analysis": {
-                    "neighborhood_median_temp": round(float(median_temp), 1) if median_temp is not None else None,
-                    "spatial_deviation_score": round(float(residual), 2) if residual is not None else 0.0,
-                    "spatially_consistent": spatially_consistent if spatially_consistent is not None else None,
-                    "peer_anomaly_ratio": round(float(peer_anomaly_ratio), 2)
-                }
+                "spatial_analysis": spatial_analysis_dict
             }
 
             classification = state["status"]
-            
+            ml_res = state.get("ml_model")
+
+            # 3. Multi-Class Automated Root-Cause Diagnosis
+            root_cause_diag = root_cause_classifier.diagnose(
+                observation={"temp": obs_temp, "hum": obs_hum, "pres": obs_pres},
+                spatial_analysis=spatial_analysis_dict,
+                thermo_violations=state.get("thermodynamic_violations"),
+                battery_v=float(state["battery"]),
+                signal_dbm=float(state["signal"]),
+                ml_is_anomaly=bool(ml_res.get("is_anomaly", False)) if ml_res else False,
+                ml_score=float(ml_res.get("anomaly_score", 0.0) or 0.0) if ml_res else 0.0,
+                flatline_flag=state.get("is_flatline", False)
+            )
+            state["root_cause_diagnosis"] = root_cause_diag
+
+            # 4. Self-Healing Real-Time Imputation
+            anomalous_params = []
+            if classification in ["LOCALIZED_ANOMALY", "CRITICAL", "SUSPECT"] or state.get("sensors", {}).get("temperature", {}).get("wmo_flag", 0) > 0:
+                anomalous_params.append("temperature")
+            if state.get("sensors", {}).get("humidity", {}).get("wmo_flag", 0) > 0:
+                anomalous_params.append("humidity")
+            if state.get("sensors", {}).get("pressure", {}).get("wmo_flag", 0) > 0:
+                anomalous_params.append("pressure")
+
+            imputed_data = imputation_engine.impute_observation(
+                target_station=state,
+                nearby_peers=nearby_stations,
+                anomalous_params=anomalous_params
+            )
+            state["self_healing_data"] = imputed_data
+
+            # 5. Sensor Health Index (SHI) & Predictive Maintenance
+            health_record = sensor_health_engine.evaluate_station_health(
+                station_id=st_id,
+                current_status=classification,
+                drift_rate_c_per_day=state.get("drift_rate", 0.0),
+                battery_v=float(state["battery"]),
+                signal_dbm=float(state["signal"]),
+                flatline_detected=state.get("is_flatline", False),
+                qc_envelope_breached=qc_envelope_breached
+            )
+            state["sensor_health"] = health_record
+
             # Confidence logic based on multi-source evidence
             confidence = "MEDIUM"
             if classification in ["CRITICAL", "SUSPECT"]:
@@ -421,227 +474,64 @@ class WeatherService:
                 elif qc_envelope_breached:
                     confidence = "MEDIUM"
 
-            interpretation = "Nominal operations."
+            interpretation = root_cause_diag.get("specific_reason", "Nominal operations.")
             badge_class = "badge-normal"
             
             if classification == "REGIONAL_EVENT":
-                interpretation = "Anomaly corroborated by neighborhood peers, confirming a regional meteorological event."
                 badge_class = "badge-extreme"
-            elif classification == "LOCALIZED_ANOMALY":
-                interpretation = "Target reading is anomalous and contradicts nearby station observations, indicating a localized anomaly."
-                badge_class = "badge-critical"
-            elif classification == "ANOMALY":
-                interpretation = "ML model detected an anomalous reading. Sensor QC is within the station's normal envelope, and no nearby stations are available for spatial validation. Further operator verification is required."
+            elif classification in ["LOCALIZED_ANOMALY", "CRITICAL"]:
                 badge_class = "badge-critical"
             elif classification == "SUSPECT":
-                interpretation = "Sensor reading flagged by physical QC limits."
                 badge_class = "badge-suspect"
-            elif classification == "CRITICAL":
-                interpretation = "Critical hardware fault or physically impossible sensor telemetry detected."
-                badge_class = "badge-critical"
 
             state["final_assessment"] = {
                 "classification": classification,
+                "root_cause": root_cause_diag.get("root_cause"),
                 "confidence": confidence,
                 "interpretation": interpretation,
-                "badge_class": badge_class
+                "badge_class": badge_class,
+                "xai_summary": ml_res.get("xai_explanation", {}).get("explanation_text") if ml_res and ml_res.get("xai_explanation") else None
             }
 
             # -----------------------------------------------------------------
-            # Automated Backend Incident Lifecycle Management (Non-Crashing)
+            # Automated Backend Incident Lifecycle Management
             # -----------------------------------------------------------------
             try:
-                fault = state.get("fault_details")
-                ml_res = state.get("ml_model")
-                
                 if classification in ["LOCALIZED_ANOMALY", "REGIONAL_EVENT", "ANOMALY", "CRITICAL", "SUSPECT"]:
-                    reasons = []
+                    reasons = [root_cause_diag.get("root_cause", "ANOMALY_DETECTED")]
                     if ml_res and ml_res.get("is_anomaly"):
                         score_val = ml_res.get("anomaly_score")
                         score_str = f"{round(float(score_val), 3)}" if score_val is not None else "DETECTED"
                         reasons.append(f"ML_SCORE_{score_str}")
-                    
-                    if fault:
-                        f_type = fault.get("fault_type")
-                        if f_type == "SPIKE":
-                            reasons.append("RATE_FAIL")
-                        elif f_type == "DRIFT":
-                            reasons.append("DRIFT")
-                        elif f_type == "FLATLINE":
-                            reasons.append("FLATLINE")
-                        elif f_type == "POWER":
-                            reasons.append("POWER_LOW")
-                        elif f_type == "STORM":
-                            reasons.append("STORM_SIGNATURE")
-                    elif qc_envelope_breached:
-                        reasons.append("QC_ENVELOPE_BREACH")
-                        
-                    if classification == "LOCALIZED_ANOMALY":
-                        reasons.append("SPATIAL_DISCORDANCE")
-                    elif classification == "REGIONAL_EVENT":
-                        reasons.append("REGIONAL_CLUSTER_CONSENSUS")
-                    if not reasons:
-                        reasons.append("PHYSICAL_QC_THRESHOLD_BREACH")
 
-                    # Derive primary variable from active fault first, then QC violations, then default
-                    _var_map = {
-                        "temperature": "air_temperature",
-                        "humidity":    "relative_humidity",
-                        "pressure":    "surface_pressure",
-                        "wind_speed":  "wind_speed"
-                    }
-                    if fault and fault.get("fault_type") == "STORM":
-                        var_name = "precipitation"
-                    elif fault and fault.get("fault_type") == "POWER":
-                        var_name = "battery_voltage"
-                    elif fault and fault.get("fault_type") in ["SPIKE", "DRIFT", "FLATLINE"]:
-                        var_name = "air_temperature"
-                    elif qc_violations:
-                        var_name = _var_map.get(qc_violations[0]["parameter"], "air_temperature")
-                    else:
-                        var_name = "air_temperature"
-
-                    exp = interpretation
-                    if ml_res and ml_res.get("is_anomaly"):
-                        score_str = f"{round(float(ml_res.get('anomaly_score', 0)), 3)}" if ml_res.get("anomaly_score") is not None else "N/A"
-                        thresh_str = f"{round(float(ml_res.get('threshold', 0)), 3)}" if ml_res.get("threshold") is not None else "N/A"
-                        exp += f" Isolation Forest score ({score_str}) crossed model threshold ({thresh_str})."
-
-                    # Assemble Three Independent Evidence Factors for Transparent Adjudication
-                    # 1. Model Prediction Evidence
-                    model_prediction = {
-                        "has_model": bool(ml_res.get("has_model", False)) if ml_res else False,
-                        "model_id": ml_res.get("model_id") if ml_res else None,
-                        "model_version": ml_res.get("model_version") if ml_res else None,
-                        "anomaly_score": round(float(ml_res["anomaly_score"]), 3) if (ml_res and ml_res.get("anomaly_score") is not None) else None,
-                        "threshold": round(float(ml_res["threshold"]), 3) if (ml_res and ml_res.get("threshold") is not None) else None,
-                        "status": ml_res.get("status", "UNTRAINED") if ml_res else "UNTRAINED",
-                        "is_anomaly": bool(ml_res.get("is_anomaly", False)) if ml_res else False,
-                    }
-
-                    # 2. Nearby Station Evidence (Spatial Consensus)
                     closest_peer = nearby_stations[0] if nearby_stations else None
-                    peer_st_id = None
-                    if closest_peer:
-                        candidate_id = closest_peer.get("station_id") or closest_peer.get("id")
-                        if candidate_id and candidate_id != st_id:
-                            peer_st_id = candidate_id
-
-                    spatial_evidence = {
-                        "search_radius_km": 60.0,
-                        "eligible_peer_count": len(nearby_stations),
-                        "closest_peer": {
-                            "station_id": peer_st_id,
-                            "station_name": closest_peer.get("name"),
-                            "distance_km": round(float(closest_peer.get("distance_km", 0.0)), 2),
-                            "temperature": closest_peer.get("temp"),
-                            "status": closest_peer.get("status")
-                        } if (closest_peer and peer_st_id) else None,
-                        "target_temperature": round(float(state["sensors"]["temperature"]["value"]), 1),
-                        "neighborhood_median_temp": round(float(median_temp), 1) if median_temp is not None else None,
-                        "spatial_deviation": round(float(residual), 2) if residual is not None else 0.0,
-                        "spatial_result": "CONTRADICTED" if spatially_consistent is False else ("CONSISTENT" if spatially_consistent is True else "UNAVAILABLE"),
-                        "summary": "Neighborhood contradicts reading" if spatially_consistent is False else ("Validated by peers" if spatially_consistent is True else "No nearby stations available within 60 km radius. Spatial validation unavailable.")
-                    }
-
-                    # 3. Sensor / QC Evidence — report the primary violating variable
-                    #    Falls back to temperature if no envelope violation was found.
-                    _primary = qc_violations[0] if qc_violations else None
-                    _obs_val = _primary["value"] if _primary else obs_temp
-                    _unit    = _primary["unit"]  if _primary else state["sensors"]["temperature"]["unit"]
-                    _q_min   = _primary["normal_min"] if _primary else (round(float(qc_conf.get("temperature_normal_min")), 2) if (qc_conf and qc_conf.get("temperature_normal_min") is not None) else None)
-                    _q_max   = _primary["normal_max"] if _primary else (round(float(qc_conf.get("temperature_normal_max")), 2) if (qc_conf and qc_conf.get("temperature_normal_max") is not None) else None)
-
-                    if fault:
-                        f_type = fault.get("fault_type")
-                        if f_type == "POWER":
-                            _obs_val = round(float(state["battery"]), 2)
-                            _unit = "V"
-                            _q_min = 11.0
-                            _q_max = 15.0
-                        elif f_type == "STORM":
-                            _obs_val = round(float(state["sensors"]["rainfall"]["value"]), 1)
-                            _unit = "mm"
-                            _q_min = 0.0
-                            _q_max = 10.0
-                    sensor_qc_evidence = {
-                        "variable": var_name,
-                        "observed_value": _obs_val,
-                        "unit": _unit,
-                        "station_normal_min": _q_min,
-                        "station_normal_max": _q_max,
-                        "qc_result": "OUTSIDE_NORMAL_ENVELOPE" if qc_envelope_breached else "WITHIN_NORMAL_ENVELOPE",
-                        "qc_violations": qc_violations,
-                        "physical_qc": "SUSPECT" if (
-                            state["battery"] < 11.0 or state["signal"] < -95
-                            or obs_temp < -50 or obs_temp > 60
-                            or obs_hum < 0 or obs_hum > 100
-                            or obs_pres < 800 or obs_pres > 1200
-                        ) else "PASS",
-                        "fault_state": f"{fault.get('fault_type')} INJECTED" if fault else "NONE_DETECTED",
-                        "fault_type": fault.get("fault_type") if fault else None,
-                        "battery": round(float(state["battery"]), 2),
-                        "signal": round(float(state["signal"]), 1)
-                    }
-
-                    evidence_data = {
-                        "model_prediction": model_prediction,
-                        "spatial_evidence": spatial_evidence,
-                        "sensor_qc_evidence": sensor_qc_evidence,
-                        "final_assessment": {
-                            "classification": classification,
-                            "confidence": confidence,
-                            "interpretation": interpretation,
-                            "badge_class": badge_class
-                        }
-                    }
-
-                    if len(nearby_stations) == 0:
-                        recommended_actions = [
-                            "Perform local sensor and hardware verification",
-                            "Review station telemetry history",
-                            "Await additional observations or nearby spatial evidence"
-                        ]
-                        peer_action = "N/A"
-                    else:
-                        peer_action = (
-                            f"Validate reading against nearest spatial peer network ({peer_st_id})"
-                            if peer_st_id
-                            else "Validate reading against regional peer network"
-                        )
-                        recommended_actions = [
-                            "Inspect sensor radiation shield and terminal connections",
-                            peer_action,
-                            "Check hardware battery voltage and telemetry signal stability"
-                        ]
-
-                    fault_risk_val = 0.85
-                    if ml_res and ml_res.get("anomaly_score") is not None:
-                        fault_risk_val = float(ml_res["anomaly_score"])
-                    elif classification == "CRITICAL":
-                        fault_risk_val = 0.95
+                    peer_st_id = closest_peer.get("station_id") if closest_peer else None
 
                     inc_payload = {
                         "station_id": st_id,
                         "station_name": state["station_name"],
-                        "variable": var_name,
+                        "variable": "air_temperature",
                         "severity": "critical" if classification in ["CRITICAL", "LOCALIZED_ANOMALY"] else "high",
-                        "fault_risk": round(fault_risk_val, 2),
+                        "fault_risk": round(float(ml_res.get("anomaly_score", 0.85) or 0.85), 2),
                         "quality_state": classification,
                         "reason_codes": reasons,
-                        "explanation": exp,
-                        "recommended_actions": recommended_actions,
+                        "explanation": f"[{root_cause_diag.get('root_cause')}] {interpretation}",
+                        "recommended_actions": [root_cause_diag.get("recommended_action", "Inspect station sensor terminal.")],
                         "evidence_ids": [f"EV-{st_id}-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d')}"],
-                        "evidence_data": evidence_data
+                        "evidence_data": {
+                            "model_prediction": ml_res,
+                            "root_cause_diagnosis": root_cause_diag,
+                            "self_healing_data": imputed_data,
+                            "sensor_health": health_record,
+                            "spatial_evidence": state["spatial_data"],
+                            "final_assessment": state["final_assessment"]
+                        }
                     }
                     create_or_update_incident(inc_payload)
-                    logger.info(f"[INCIDENT] Recorded/updated active incident for {st_id} ({classification}) with peer action: '{peer_action}'")
                 elif classification == "NORMAL":
-                    resolved_count = resolve_open_incidents_for_station(st_id)
-                    if resolved_count > 0:
-                        logger.info(f"[INCIDENT] Auto-resolved {resolved_count} incident(s) for {st_id} on telemetry return to normal")
+                    resolve_open_incidents_for_station(st_id)
             except Exception as e:
-                logger.error(f"[INCIDENT LIFECYCLE ERROR] Failed to process incident lifecycle for {st_id}: {e}", exc_info=True)
+                logger.error(f"[INCIDENT ERROR] {st_id}: {e}", exc_info=True)
 
         self.live_state = new_state
 
@@ -658,4 +548,3 @@ class WeatherService:
             await self._sync_fleet(client)
 
 weather_service = WeatherService()
-

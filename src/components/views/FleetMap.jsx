@@ -225,31 +225,43 @@ export const FleetMap = () => {
         </div>
       </div>
       <div className="cyber-card-body" style={{ padding: 0 }}>
-        <div className="tactical-map-container" style={{ position: 'relative', height: '620px' }}>
-          <div ref={mapContainerRef} id="tactical-map" style={{ height: '100%', width: '100%' }}></div>
-          <div className="map-overlay-hud">
-            <div className="map-overlay-card">
-              <div style={{ fontWeight: 'bold', color: 'var(--neon-cyan)', marginBottom: '6px', fontSize: '0.75rem' }}>
-                SPATIAL RADAR LEGEND
-              </div>
-              <div className="map-legend-item">
-                <span className="pulse-dot pulse-cyan"></span>
-                <span>Active Target ({targetStation?.id})</span>
-              </div>
-              <div className="map-legend-item">
-                <span className="pulse-dot pulse-green"></span>
-                <span>Peer Inside Radius (&le; {neighborRadiusKm} km)</span>
-              </div>
-              <div className="map-legend-item">
-                <span className="pulse-dot pulse-amber"></span>
-                <span>Suspect / Discrepant Peer</span>
-              </div>
-              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '6px' }}>
-                Click any pin to center geodetic radius circle.
+        {(!stations || stations.length === 0) ? (
+          <div style={{ padding: '60px 20px', textAlign: 'center', background: 'rgba(5,8,17,0.7)' }}>
+            <i className="fa-solid fa-map-location-dot" style={{ fontSize: '2.5rem', color: 'var(--neon-cyan)', marginBottom: '16px', opacity: 0.8 }}></i>
+            <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.1rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+              NO GEOSPATIAL STATIONS ACTIVE
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '8px', maxWidth: '420px', margin: '8px auto 0' }}>
+              Provision a new automatic weather station in Station Credentials to visualize radar positions and peer neighbor radius.
+            </div>
+          </div>
+        ) : (
+          <div className="tactical-map-container" style={{ position: 'relative', height: '620px' }}>
+            <div ref={mapContainerRef} id="tactical-map" style={{ height: '100%', width: '100%' }}></div>
+            <div className="map-overlay-hud">
+              <div className="map-overlay-card">
+                <div style={{ fontWeight: 'bold', color: 'var(--neon-cyan)', marginBottom: '6px', fontSize: '0.75rem' }}>
+                  SPATIAL RADAR LEGEND
+                </div>
+                <div className="map-legend-item">
+                  <span className="pulse-dot pulse-cyan"></span>
+                  <span>Active Target ({targetStation?.id})</span>
+                </div>
+                <div className="map-legend-item">
+                  <span className="pulse-dot pulse-green"></span>
+                  <span>Peer Inside Radius (&le; {neighborRadiusKm} km)</span>
+                </div>
+                <div className="map-legend-item">
+                  <span className="pulse-dot pulse-amber"></span>
+                  <span>Suspect / Discrepant Peer</span>
+                </div>
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '6px' }}>
+                  Click any pin to center geodetic radius circle.
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

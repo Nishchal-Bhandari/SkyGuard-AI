@@ -7,10 +7,11 @@ import { apiClient } from '../../utils/apiClient';
 
 export const Incidents = () => {
   const { role, assignedStationId } = useAuth();
-  const { incidents, saveIncidents, syncLiveOpenMeteoData } = useWeather();
+  const { incidents, saveIncidents, clearAllIncidents, syncLiveOpenMeteoData } = useWeather();
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
   const isOperator = role === 'station_operator' || role === 'STATION_OPERATOR';
   const baseIncidents = isOperator && assignedStationId
@@ -44,6 +45,24 @@ export const Incidents = () => {
       console.warn("[Incidents View] Manual refresh failed:", e.message);
     } finally {
       setIsRefreshing(false);
+    }
+  };
+
+  const handleClearAllIncidents = async () => {
+    if (!window.confirm("Are you sure you want to permanently clear the global incident queue?")) {
+      return;
+    }
+    setIsClearing(true);
+    tacticalAudio.playClick();
+    try {
+      if (clearAllIncidents) {
+        await clearAllIncidents();
+      }
+      tacticalAudio.playSuccess();
+    } catch (e) {
+      console.error("[Incidents View] Failed to clear incidents:", e);
+    } finally {
+      setIsClearing(false);
     }
   };
 
@@ -100,6 +119,17 @@ export const Incidents = () => {
               title="Refresh Incidents from Cloud Database"
             >
               <i className={`fa-solid fa-rotate ${isRefreshing ? 'fa-spin' : ''}`}></i>
+            </button>
+
+            <button
+              className="cyber-btn btn-sm btn-danger"
+              onClick={handleClearAllIncidents}
+              disabled={isClearing || baseIncidents.length === 0}
+              style={{ padding: '5px 10px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '5px' }}
+              title="Permanently Clear Global Incident Queue"
+            >
+              <i className="fa-solid fa-trash-can"></i>
+              <span>CLEAR QUEUE</span>
             </button>
           </div>
         </div>

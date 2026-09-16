@@ -6,7 +6,8 @@ from typing import Optional, Dict, Any, List
 from backend.app.storage.database import (
     list_incidents,
     get_incident,
-    adjudicate_incident
+    adjudicate_incident,
+    clear_all_incidents
 )
 from backend.app.api.v1.auth import get_current_user, get_optional_user
 
@@ -98,4 +99,19 @@ def adjudicate(
         "success": True,
         "message": f"Incident {clean_id} adjudicated as {payload.action}",
         "incident": updated
+    }
+
+
+@router.delete("/incidents")
+def delete_all_incidents(
+    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+):
+    """
+    Clears all incidents in the global incident queue.
+    """
+    count = clear_all_incidents()
+    return {
+        "success": True,
+        "message": "Global incident queue cleared successfully",
+        "cleared_count": count
     }

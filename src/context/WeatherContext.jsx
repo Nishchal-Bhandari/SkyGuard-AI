@@ -17,8 +17,8 @@ import { tacticalAudio } from '../utils/audio';
 import { useAuth } from './AuthContext';
 import { apiClient } from '../utils/apiClient';
 
-const STATIONS_CACHE_KEY = "skyguard_stations_cache_v3";
-const INCIDENTS_CACHE_KEY = "skyguard_incidents_cache_v3";
+const STATIONS_CACHE_KEY = "skyguard_stations_cache_v5";
+const INCIDENTS_CACHE_KEY = "skyguard_incidents_cache_v5";
 const WeatherContext = createContext(null);
 
 export const WeatherProvider = ({ children }) => {
@@ -30,6 +30,8 @@ export const WeatherProvider = ({ children }) => {
   // Initialize stations from persistent localStorage cache (clean state when empty)
   const [stations, setStations] = useState(() => {
     try {
+      localStorage.removeItem("skyguard_stations_cache_v4");
+      localStorage.removeItem("skyguard_stations_cache_v3");
       localStorage.removeItem("skyguard_stations_cache_v2");
       const saved = localStorage.getItem(STATIONS_CACHE_KEY);
       if (saved) {
@@ -40,16 +42,19 @@ export const WeatherProvider = ({ children }) => {
     return [];
   });
 
-  // Initialize incidents from persistent localStorage cache so reload never wipes triage
+  // Initialize incidents from persistent localStorage cache (default empty)
   const [incidents, setIncidents] = useState(() => {
     try {
+      localStorage.removeItem("skyguard_incidents_cache_v4");
+      localStorage.removeItem("skyguard_incidents_cache_v3");
+      localStorage.removeItem("skyguard_incidents_cache_v2");
       const saved = localStorage.getItem(INCIDENTS_CACHE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) return parsed;
       }
     } catch (e) {}
-    return JSON.parse(JSON.stringify(SEED_INCIDENTS));
+    return [];
   });
 
   const saveIncidents = useCallback((newIncidents) => {
@@ -58,6 +63,16 @@ export const WeatherProvider = ({ children }) => {
       if (Array.isArray(newIncidents)) {
         localStorage.setItem(INCIDENTS_CACHE_KEY, JSON.stringify(newIncidents));
       }
+    } catch (e) {}
+  }, []);
+
+  const clearAllIncidents = useCallback(async () => {
+    setIncidents([]);
+    try {
+      localStorage.removeItem(INCIDENTS_CACHE_KEY);
+      localStorage.removeItem("skyguard_incidents_cache_v3");
+      localStorage.removeItem("skyguard_incidents_cache_v2");
+      await apiClient.clearAllIncidents().catch(() => {});
     } catch (e) {}
   }, []);
 
@@ -246,30 +261,7 @@ export const WeatherProvider = ({ children }) => {
   }, []);
 
   // Telemetry History state (Map<stationId, Array<Obs>>)
-  const [history, setHistory] = useState(() => {
-    const hist = {};
-    const presetTemps = {
-      'AWS-07': 29.5, 'AWS-12': 28.2, 'AWS-19': 22.4, 'AWS-01': 32.0,
-      'AWS-04': 25.8, 'AWS-21': 14.5, 'AWS-15': 27.8, 'AWS-09': 30.1
-    };
-    OPEN_METEO_PRESET_STATIONS.forEach(st => {
-      const bTemp = presetTemps[st.id] || 27.5;
-      hist[st.id] = [
-        ...Array.from({ length: 20 }, (_, i) => {
-          const t = new Date(Date.now() - (20 - i) * 30 * 1000);
-          return {
-            time: t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            temperature: +(bTemp + Math.sin(i / 3.0) * 0.8 + (Math.sin(i) * 0.3)).toFixed(1),
-            humidity: +(65 + Math.cos(i / 3.0) * 4.0).toFixed(1),
-            pressure: +(1012 + Math.cos(i / 4.0) * 0.5).toFixed(1),
-            wind_speed: +(8 + Math.sin(i / 2.0) * 2.0).toFixed(1),
-            rainfall: (i === 12) ? 1.5 : 0
-          };
-        })
-      ];
-    });
-    return hist;
-  });
+  const [history, setHistory] = useState({});
 
   // Reference for stable state access in async sync loops
   const stateRef = useRef({ stations, history, activeStationModels, activeFaults, qcConfig, neighborRadiusKm });
@@ -783,6 +775,8 @@ export const WeatherProvider = ({ children }) => {
       setIsLiveApiMode,
       liveApiStatus,
       syncLiveOpenMeteoData,
+      clearAllIncidents,
+      saveIncidents,
       loadPresetFleet,
       fetchHistoricalTrainingDataset: openMeteoService.fetchHistoricalTrainingDataset.bind(openMeteoService)
     }}>

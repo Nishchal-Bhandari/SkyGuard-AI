@@ -9,7 +9,6 @@ export const CommandCenter = () => {
     setCurrentView,
     setActiveStationId,
     activeStationModels = {},
-    liveApiStatus = {},
     syncLiveOpenMeteoData
   } = useWeather();
 
@@ -17,19 +16,21 @@ export const CommandCenter = () => {
   const safeIncidents = Array.isArray(incidents) ? incidents : [];
 
   const normalCount = safeStations.filter(s => s?.status === 'NORMAL').length;
-  const suspectCount = safeStations.filter(s => s?.status === 'SUSPECT' || s?.status === 'CRITICAL').length;
-  const extremeCount = safeStations.filter(s => s?.status === 'EXTREME').length;
+  const suspectCount = safeStations.filter(s => s?.status === 'SUSPECT' || s?.status === 'CRITICAL' || s?.status === 'LOCALIZED_ANOMALY').length;
+  const extremeCount = safeStations.filter(s => s?.status === 'REGIONAL_EVENT' || s?.status === 'EXTREME').length;
   const openIncidents = safeIncidents.filter(i => i?.status === 'open').length;
 
   const handleViewModel = (stationId) => {
     setActiveStationId(stationId);
-    setCurrentView('model-governance');
+    setCurrentView('station-hud');
   };
 
-  const handleSyncNow = async () => {
-    tacticalAudio.playClick();
-    await syncLiveOpenMeteoData();
-    tacticalAudio.playSuccess();
+  const getWmoFlagColor = (flag) => {
+    if (flag === 0) return 'var(--neon-green)';
+    if (flag === 1) return 'var(--neon-amber)';
+    if (flag === 2) return 'var(--neon-red)';
+    if (flag === 3) return 'var(--neon-cyan)';
+    return 'var(--text-muted)';
   };
 
   return (
@@ -43,10 +44,10 @@ export const CommandCenter = () => {
             </div>
             <div>
               <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.92rem', fontWeight: 800, color: 'var(--neon-cyan)' }}>
-                CENTRAL FLEET OPERATIONS & SENSOR MATRIX
+                SKYGUARD AI — FLEET INTELLIGENCE & SENSOR HEALTH MATRIX
               </div>
               <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                Monitoring {stations.length} Automatic Weather Stations across meteorological sectors.
+                Monitoring {stations.length} Automatic Weather Stations | Thermodynamic Verification & Real-Time Imputation Active
               </div>
             </div>
           </div>
@@ -79,29 +80,29 @@ export const CommandCenter = () => {
           <div className="stat-value text-green" id="stat-norm-val">
             {normalCount} <span className="stat-unit">/ {stations.length}</span>
           </div>
-          <div className="stat-footer"><span>Fleet Operational</span><span className="pulse-dot pulse-green"></span></div>
+          <div className="stat-footer"><span>WMO Class 1 Nominal</span><span className="pulse-dot pulse-green"></span></div>
         </div>
 
         <div className="cyber-card stat-card amber-card">
           <div className="stat-header">
-            <span className="stat-label">QC ANOMALIES FLAGGED</span>
+            <span className="stat-label">LOCALIZED ANOMALIES</span>
             <div className="stat-icon"><i className="fa-solid fa-triangle-exclamation text-amber"></i></div>
           </div>
           <div className="stat-value text-amber" id="stat-susp-val">
             {suspectCount} <span className="stat-unit">STATIONS</span>
           </div>
-          <div className="stat-footer"><span>Suspect Observations</span><span className="pulse-dot pulse-amber"></span></div>
+          <div className="stat-footer"><span>Sensor Drift & Spikes</span><span className="pulse-dot pulse-amber"></span></div>
         </div>
 
         <div className="cyber-card stat-card purple-card">
           <div className="stat-header">
-            <span className="stat-label">GENUINE EXTREMES</span>
+            <span className="stat-label">REGIONAL WEATHER FRONTS</span>
             <div className="stat-icon"><i className="fa-solid fa-cloud-bolt text-purple"></i></div>
           </div>
           <div className="stat-value text-purple" id="stat-ext-val">
             {extremeCount} <span className="stat-unit">EVENTS</span>
           </div>
-          <div className="stat-footer"><span>Multi-Sensor Coherent</span><span className="pulse-dot pulse-green"></span></div>
+          <div className="stat-footer"><span>Peer-Corroborated</span><span className="pulse-dot pulse-green"></span></div>
         </div>
 
         <div className="cyber-card stat-card threat-card">
@@ -116,9 +117,9 @@ export const CommandCenter = () => {
         </div>
       </div>
 
-      <div className="cyber-card" style={{ marginTop: '10px' }}>
+      <div className="cyber-card" style={{ marginTop: '14px' }}>
         <div className="cyber-card-header">
-          <div className="cyber-card-title"><i className="fa-solid fa-network-wired"></i> FLEET SENSOR TELEMETRY & LIVE QUALITY MATRIX</div>
+          <div className="cyber-card-title"><i className="fa-solid fa-network-wired"></i> FLEET TELEMETRY, ROOT-CAUSE DIAGNOSIS & SENSOR HEALTH (SHI)</div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button className="cyber-btn btn-sm" onClick={() => setCurrentView('fleet-map')}>
               <i className="fa-solid fa-map"></i> View Geospatial Radar
@@ -132,79 +133,72 @@ export const CommandCenter = () => {
               <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
                 NO WEATHER STATIONS CONFIGURED
               </div>
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', maxWidth: '520px', margin: '8px auto 16px auto' }}>
-                All existing station data has been removed. Click below to provision a weather station with its geographic coordinates to begin real-time telemetry monitoring.
-              </p>
-              <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
-                <button className="cyber-btn btn-sm btn-primary" onClick={() => setCurrentView('credentials')}>
-                  <i className="fa-solid fa-key"></i> Provision Weather Station
-                </button>
-              </div>
             </div>
           ) : (
-
             <div className="tactical-table-wrapper">
               <table className="tactical-table">
                 <thead>
                   <tr>
                     <th>STATION ID</th>
-                    <th>LOCATION & COORDINATES</th>
-                    <th>WEATHER CONDITION</th>
-                    <th>STATUS</th>
-                    <th>DEDICATED MODEL</th>
-                    <th>TEMPERATURE</th>
-                    <th>HUMIDITY</th>
-                    <th>PRESSURE</th>
-                    <th>RAINFALL</th>
+                    <th>LOCATION & ELEVATION</th>
+                    <th>ASSESSMENT & ROOT CAUSE</th>
+                    <th>SENSOR HEALTH (SHI)</th>
+                    <th>WMO FLAGS (T/H/P)</th>
+                    <th>AIR TEMP (°C)</th>
+                    <th>HUMIDITY (%)</th>
+                    <th>PRESSURE (hPa)</th>
                     <th>ACTIONS</th>
                   </tr>
                 </thead>
                 <tbody>
                   {stations.map(st => {
-                    const badge = st.status === 'NORMAL' ? 'badge-normal' : st.status === 'SUSPECT' ? 'badge-suspect' : st.status === 'CRITICAL' ? 'badge-critical' : 'badge-extreme';
-                    const model = activeStationModels[st.id]?.modelCard;
-                    const meta = st.weather_meta;
+                    const badge = st.status === 'NORMAL' ? 'badge-normal' : (st.status === 'REGIONAL_EVENT' ? 'badge-extreme' : (st.status === 'SUSPECT' ? 'badge-suspect' : 'badge-critical'));
+                    const rootCause = st.root_cause_diagnosis?.root_cause || st.final_assessment?.root_cause || 'NOMINAL';
+                    const shi = st.sensor_health?.overall_health_score ?? 100;
+                    const tFlag = st.sensors?.temperature?.wmo_flag ?? 0;
+                    const hFlag = st.sensors?.humidity?.wmo_flag ?? 0;
+                    const pFlag = st.sensors?.pressure?.wmo_flag ?? 0;
 
                     return (
-                      <tr key={st.id}>
-                        <td style={{ fontWeight: 'bold', color: 'var(--neon-cyan)' }}>{st.id}</td>
+                      <tr key={st.id || st.station_id}>
+                        <td style={{ fontWeight: 'bold', color: 'var(--neon-cyan)' }}>{st.id || st.station_id}</td>
                         <td>
-                          <div style={{ fontWeight: 600 }}>{st.name}</div>
+                          <div style={{ fontWeight: 600 }}>{st.name || st.station_name}</div>
                           <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                            {st.region} • {st.lat?.toFixed(2)}°N, {st.lon?.toFixed(2)}°E ({st.elevation || 0}m)
+                            {st.region} • {st.latitude?.toFixed(2)}°N, {st.longitude?.toFixed(2)}°E ({st.elevation || 0}m)
                           </div>
                         </td>
                         <td>
-                          {meta ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: meta.color }}>
-                              <i className={`fa-solid ${meta.icon}`}></i>
-                              <span>{meta.label}</span>
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Atmospheric Feed</span>
-                          )}
+                          <span className={`cyber-badge ${badge}`} style={{ fontSize: '0.68rem', marginRight: '6px' }}>{st.status}</span>
+                          <div style={{ fontSize: '0.68rem', color: rootCause === 'NOMINAL' ? 'var(--text-muted)' : 'var(--neon-amber)', fontFamily: 'var(--font-mono)', marginTop: '2px' }}>
+                            {rootCause}
+                          </div>
                         </td>
                         <td>
-                          <span className={`cyber-badge ${badge}`} id={`live-status-${st.id}`}>{st.status}</span>
-                        </td>
-                        <td>
-                          {model ? (
-                            <span className="cyber-badge badge-normal" style={{ fontSize: '0.68rem' }}>
-                              {model.model_id}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 'bold', color: shi >= 80 ? 'var(--neon-green)' : (shi >= 50 ? 'var(--neon-amber)' : 'var(--neon-red)') }}>
+                              {shi}%
                             </span>
-                          ) : (
-                            <span className="cyber-badge badge-offline" style={{ fontSize: '0.68rem' }}>
-                              Rules Only
+                            <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                              ({st.sensor_health?.predictive_maintenance?.remaining_useful_life_days ?? 180}d RUL)
                             </span>
-                          )}
+                          </div>
                         </td>
-                        <td id={`live-temp-${st.id}`} style={{ fontWeight: 600 }}>{st.sensors.temperature.value} {st.sensors.temperature.unit}</td>
-                        <td id={`live-hum-${st.id}`}>{st.sensors.humidity.value} {st.sensors.humidity.unit}</td>
-                        <td id={`live-pres-${st.id}`}>{st.sensors.pressure.value} {st.sensors.pressure.unit}</td>
-                        <td id={`live-rain-${st.id}`}>{st.sensors.rainfall.value} {st.sensors.rainfall.unit}</td>
                         <td>
-                          <button className="cyber-btn btn-sm" onClick={() => handleViewModel(st.id)}>
-                            <i className="fa-solid fa-brain"></i> Model Profile
+                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', display: 'flex', gap: '4px' }}>
+                            <span style={{ color: getWmoFlagColor(tFlag) }}>T:{tFlag}</span>
+                            <span style={{ color: getWmoFlagColor(hFlag) }}>H:{hFlag}</span>
+                            <span style={{ color: getWmoFlagColor(pFlag) }}>P:{pFlag}</span>
+                          </div>
+                        </td>
+                        <td style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>
+                          {st.sensors?.temperature?.value} {st.sensors?.temperature?.unit}
+                        </td>
+                        <td style={{ fontFamily: 'var(--font-mono)' }}>{st.sensors?.humidity?.value} {st.sensors?.humidity?.unit}</td>
+                        <td style={{ fontFamily: 'var(--font-mono)' }}>{st.sensors?.pressure?.value} {st.sensors?.pressure?.unit}</td>
+                        <td>
+                          <button className="cyber-btn btn-sm" onClick={() => handleViewModel(st.id || st.station_id)}>
+                            <i className="fa-solid fa-radar"></i> Inspect Station
                           </button>
                         </td>
                       </tr>

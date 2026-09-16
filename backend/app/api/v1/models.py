@@ -6,7 +6,8 @@ from backend.app.storage.database import (
     get_active_model_record,
     list_station_models,
     list_training_jobs,
-    get_training_job
+    get_training_job,
+    rollback_model_version
 )
 from backend.app.services.training_service import training_service
 from backend.app.services.model_storage import model_storage_service

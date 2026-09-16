@@ -60,8 +60,7 @@ export const FaultLab = () => {
   const { role, assignedStationId } = useAuth();
   const { injectFault, clearFaults, stations, setCurrentView } = useWeather();
   const [selectedStation, setSelectedStation] = useState(
-
-    (role === 'station_operator' && assignedStationId) ? assignedStationId : (stations[0]?.id || 'AWS-07')
+    (role === 'station_operator' && assignedStationId) ? assignedStationId : (stations[0]?.id || '')
   );
   const [selectedFault, setSelectedFault] = useState('SPIKE');
   const [lastInjected, setLastInjected] = useState(null);

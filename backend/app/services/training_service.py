@@ -1,5 +1,6 @@
 import sys
 import time
+import math
 import logging
 import datetime
 import hashlib
@@ -64,12 +65,15 @@ class StationAdaptiveTrainingService:
 
         # Create Training Job in RUNNING state
         job_id = create_training_job(clean_id, target_version)
+        records = fetch_historical_telemetry(clean_id)
         
         return {
             "success": True,
             "job_id": job_id,
             "station_id": clean_id,
-            "model_version": target_version
+            "model_version": target_version,
+            "valid_records": len(records),
+            "training_rows": len(records)
         }
 
     def execute_training_job(self, job_id: int, station_id: str, target_version: str):
@@ -343,35 +347,62 @@ class StationAdaptiveTrainingService:
         iforest = IsolationForest.from_dict(artifact["model_weights"])
         stats = model_card["normalization_stats"]
 
+        # Import thermo & shap engines
+        from ml.thermo_engine import thermo_engine
+        from ml.shap_engine import TreeSHAPEngine
+
         temp = float(observation.get("temperature", observation.get("temp", stats.get("t_mean", 25.0))))
         hum = float(observation.get("humidity", observation.get("hum", stats.get("h_mean", 60.0))))
         pres = float(observation.get("pressure", observation.get("pres", stats.get("p_mean", 1010.0))))
-        wind = float(observation.get("wind_speed", observation.get("wind", stats.get("w_mean", 10.0))))
+        hour = int(observation.get("hour", 12))
 
-        prev_t = float(last_observation.get("temperature", temp)) if last_observation else temp
+        prev_t = float(last_observation.get("temperature", last_observation.get("temp", temp))) if last_observation else temp
         t_std = stats.get("t_std", 1.0) or 1.0
         h_std = stats.get("h_std", 1.0) or 1.0
         p_std = stats.get("p_std", 1.0) or 1.0
-        w_std = stats.get("w_std", 1.0) or 1.0
 
         temp_diff = (temp - prev_t) / t_std
 
-        dew_approx = temp - ((100.0 - hum) / 5.0)
-        dew_depr = max(0.0, temp - dew_approx) / 10.0
+        vpd = thermo_engine.vapor_pressure_deficit(temp, hum)
+        td = thermo_engine.dew_point(temp, hum)
+        dew_depr = max(0.0, temp - td)
 
+        hour_rad = (2 * math.pi * hour) / 24.0
+        sin_hour = math.sin(hour_rad)
+        cos_hour = math.cos(hour_rad)
+
+        vpd_norm = (vpd - stats.get("vpd_mean", vpd)) / (stats.get("vpd_std", 1.0) or 1.0)
+        dew_depr_norm = (dew_depr - stats.get("dew_mean", dew_depr)) / (stats.get("dew_std", 1.0) or 1.0)
+
+        # 3-Parameter + Thermodynamic vector (8-D)
         x_vec = [
             (temp - stats.get("t_mean", temp)) / t_std,
             (hum - stats.get("h_mean", hum)) / h_std,
             (pres - stats.get("p_mean", pres)) / p_std,
-            (wind - stats.get("w_mean", wind)) / w_std,
+            vpd_norm,
+            dew_depr_norm,
             temp_diff,
-            0.0, 1.0,  # noon solar encoding
-            dew_depr
+            sin_hour,
+            cos_hour
         ]
 
         score = iforest.score_sample(x_vec)
         threshold = active_rec["threshold"]
         is_anomaly = score >= threshold
+
+        feat_names = model_card.get("training_summary", {}).get("features", [
+            "temperature_norm", "humidity_norm", "pressure_norm",
+            "vapor_pressure_deficit_norm", "dew_point_depr_norm",
+            "temp_rate_of_change", "diurnal_hour_sin", "diurnal_hour_cos"
+        ])
+
+        xai_result = TreeSHAPEngine.explain_instance(
+            x_vector=x_vec,
+            trees=iforest.trees,
+            sub_sample_size=iforest.sub_sample_actual,
+            feature_names=feat_names,
+            base_threshold=threshold
+        )
 
         return {
             "station_id": clean_id,
@@ -381,7 +412,9 @@ class StationAdaptiveTrainingService:
             "anomaly_score": score,
             "threshold": threshold,
             "status": "ANOMALY" if is_anomaly else "NORMAL",
-            "is_anomaly": is_anomaly
+            "is_anomaly": is_anomaly,
+            "xai_explanation": xai_result,
+            "feature_vector": x_vec
         }
 
 

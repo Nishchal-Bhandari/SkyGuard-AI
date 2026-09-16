@@ -12,7 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # Create temporary isolated environment for test run
 temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 temp_db_path = temp_db.name
-temp_db.close()
+os.environ["DATABASE_URL"] = f"sqlite:///{temp_db_path}"
 os.environ["SKYGUARD_DB_PATH"] = temp_db_path
 
 temp_models_dir = tempfile.mkdtemp()

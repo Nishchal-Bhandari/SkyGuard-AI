@@ -219,6 +219,12 @@ class ApiClient {
     });
   }
 
+  async clearAllIncidents() {
+    return await this.request('/incidents', {
+      method: "DELETE"
+    });
+  }
+
   // -------------------------------------------------------------------------
   // MLOps Pipeline Endpoints
   // -------------------------------------------------------------------------

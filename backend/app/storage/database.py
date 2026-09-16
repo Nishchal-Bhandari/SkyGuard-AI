@@ -3,9 +3,12 @@ import re
 import json
 import sqlite3
 import datetime
+import logging
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Generator, Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger("skyguard.database")
 
 from backend.app.config import (
     DATABASE_URL,
@@ -32,7 +35,7 @@ _pg_pool: Optional[Any] = None
 def get_pg_pool():
     global _pg_pool
     if _pg_pool is None and IS_POSTGRES and PSYCOPG2_AVAILABLE:
-        connect_kwargs = {}
+        connect_kwargs = {"connect_timeout": 3}
         if "sslmode" not in DATABASE_URL.lower():
             connect_kwargs["sslmode"] = DATABASE_SSL_MODE
         _pg_pool = psycopg2.pool.ThreadedConnectionPool(
@@ -138,41 +141,52 @@ def get_db() -> Generator[DBConnectionWrapper, None, None]:
     """
     if IS_POSTGRES:
         if not PSYCOPG2_AVAILABLE:
-            raise RuntimeError("psycopg2 is required for PostgreSQL connections. Install via 'pip install psycopg2-binary'")
-        
-        pool = get_pg_pool()
-        raw_conn = pool.getconn()
-        conn = DBConnectionWrapper(raw_conn, is_postgres=True)
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            pool.putconn(raw_conn)
-    else:
-        # SQLite mode
-        db_path_str = DATABASE_URL
-        if db_path_str.startswith("sqlite:///"):
-            db_path_str = db_path_str[10:]
-        sqlite_file = Path(db_path_str)
-        sqlite_file.parent.mkdir(parents=True, exist_ok=True)
+            logger.warning("psycopg2 is not available. Falling back to local SQLite.")
+            use_pg = False
+        else:
+            try:
+                pool = get_pg_pool()
+                raw_conn = pool.getconn()
+                use_pg = True
+            except Exception as e:
+                # Log once and fallback to local SQLite for offline resilience
+                use_pg = False
 
-        raw_conn = sqlite3.connect(str(sqlite_file), timeout=25.0)
-        raw_conn.row_factory = sqlite3.Row
-        raw_conn.execute("PRAGMA foreign_keys = ON;")
-        raw_conn.execute("PRAGMA journal_mode = WAL;")
-        conn = DBConnectionWrapper(raw_conn, is_postgres=False)
+        if use_pg:
+            conn = DBConnectionWrapper(raw_conn, is_postgres=True)
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                pool.putconn(raw_conn)
+            return
 
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+    # SQLite mode (Default or Fallback)
+    db_path_str = DATABASE_URL
+    if db_path_str.startswith("sqlite:///"):
+        db_path_str = db_path_str[10:]
+    elif "://" in db_path_str:
+        db_path_str = str(DATA_DIR / "skyguard.db")
+    sqlite_file = Path(db_path_str)
+    sqlite_file.parent.mkdir(parents=True, exist_ok=True)
+
+    raw_conn = sqlite3.connect(str(sqlite_file), timeout=25.0)
+    raw_conn.row_factory = sqlite3.Row
+    raw_conn.execute("PRAGMA foreign_keys = ON;")
+    raw_conn.execute("PRAGMA journal_mode = WAL;")
+    conn = DBConnectionWrapper(raw_conn, is_postgres=False)
+
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 # -----------------------------------------------------------------------------
@@ -188,12 +202,7 @@ def init_db():
         cur = conn.cursor()
 
         if conn.is_postgres:
-            # 1. PostgreSQL / TimescaleDB Schema
-            try:
-                cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb;")
-            except Exception:
-                pass
-
+            # 1. PostgreSQL Schema
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS admins (
                     id SERIAL PRIMARY KEY,
@@ -642,37 +651,6 @@ def init_db():
                 VALUES (?, ?, ?, 'ACTIVE', ?, ?);
             """, (DEFAULT_ADMIN_USERNAME.lower(), pwd_hash, DEFAULT_ADMIN_NAME, now_iso, now_iso))
             print(f"[Database] Seeded Central Admin: '{DEFAULT_ADMIN_USERNAME}'")
-
-        # Seed standard Indian AWS fleet stations so foreign key relationships are always valid
-        preset_stations = [
-            ("AWS-07", "Hyderabad AWS", "Telangana Deccan", 17.3850, 78.4867, 542.0),
-            ("AWS-12", "Mumbai Coastal AWS", "Maharashtra Coast", 19.0760, 72.8777, 14.0),
-            ("AWS-19", "Cherrapunji AWS", "Meghalaya Hills", 25.2986, 91.5822, 1313.0),
-            ("AWS-01", "Delhi Central AWS", "NCR Northern Plains", 28.6139, 77.2090, 216.0),
-            ("AWS-04", "Bengaluru Urban AWS", "Karnataka Plateau", 12.9716, 77.5946, 920.0),
-            ("AWS-21", "Shimla Ridge AWS", "Himachal Himalayas", 31.1048, 77.1734, 2276.0),
-            ("AWS-15", "Chennai Port AWS", "Tamil Nadu Coast", 13.0827, 80.2707, 7.0),
-            ("AWS-09", "Kolkata Alipore AWS", "West Bengal Delta", 22.5726, 88.3639, 9.0),
-            ("AWS-02", "Pune Valley AWS", "Maharashtra Ghats", 18.5204, 73.8567, 560.0),
-        ]
-        default_pwd_hash = hash_password("sentinel2026")
-        for s_id, s_name, s_reg, s_lat, s_lon, s_elev in preset_stations:
-            u_name = f"op_{s_id.lower().replace('-', '_')}"
-            if conn.is_postgres:
-                cur.execute("""
-                    INSERT INTO stations (
-                        station_id, station_name, username, password_hash, access_key,
-                        latitude, longitude, elevation, region, status, created_by, created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, 'sentinel2026', %s, %s, %s, %s, 'ACTIVE', 'admin', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    ON CONFLICT (station_id) DO NOTHING;
-                """, (s_id, s_name, u_name, default_pwd_hash, s_lat, s_lon, s_elev, s_reg))
-            else:
-                cur.execute("""
-                    INSERT OR IGNORE INTO stations (
-                        station_id, station_name, username, password_hash, access_key,
-                        latitude, longitude, elevation, region, status, created_by, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, 'sentinel2026', ?, ?, ?, ?, 'ACTIVE', 'admin', ?, ?);
-                """, (s_id, s_name, u_name, default_pwd_hash, s_lat, s_lon, s_elev, s_reg, now_iso, now_iso))
 
 
 
@@ -1488,6 +1466,13 @@ def list_incidents(station_id: Optional[str] = None, status: Optional[str] = Non
         cur.execute(query, tuple(params))
         rows = cur.fetchall()
         return [_format_incident_row(dict(r)) for r in rows]
+
+
+def clear_all_incidents() -> int:
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM incidents;")
+        return getattr(cur, "rowcount", 0)
 
 
 def adjudicate_incident(incident_id: str, action: str, operator_name: str = "Operator") -> Optional[Dict[str, Any]]:

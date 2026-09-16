@@ -11,7 +11,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # Use isolated temp database for test runner
 temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 temp_db_path = temp_db.name
-temp_db.close()
+os.environ["DATABASE_URL"] = f"sqlite:///{temp_db_path}"
 os.environ["SKYGUARD_DB_PATH"] = temp_db_path
 
 from backend.app.storage.database import init_db, get_db
@@ -34,6 +34,7 @@ class TestSkyGuardAuthSystem(unittest.TestCase):
             pwd_hash = hash_password("sentinel2026")
             now_iso = "2026-08-01T00:00:00Z"
             test_stations = [
+                ("AWS-01", "Delhi Central Plains", "operator_delhi"),
                 ("AWS-07", "Hyderabad Deccan Plateau", "operator_hyd"),
                 ("AWS-12", "Mumbai Coastal Radar", "operator_mum"),
                 ("AWS-19", "Cherrapunji Hill Observatory", "operator_cherra"),

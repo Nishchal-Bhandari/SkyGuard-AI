@@ -3,7 +3,8 @@
 SkyGuard-AI — Station-Adaptive ML Pipeline (Python Engine)
 Zero Universal Models Principle:
 Trains, persists, and performs inference with dedicated Isolation Forest models per Station ID.
-Uses standard Python library (math, random, json, hashlib, pathlib) for 100% portable zero-dependency execution.
+Uses strictly 3 atmospheric parameters (T, P, RH) + thermodynamic features + TreeSHAP explainability.
+Pure Python zero-dependency execution.
 """
 
 import math
@@ -12,6 +13,11 @@ import json
 import hashlib
 import os
 from pathlib import Path
+from typing import Dict, Any, List, Tuple, Optional
+
+from ml.thermo_engine import thermo_engine
+from ml.shap_engine import TreeSHAPEngine
+
 
 def c_factor(n: int) -> float:
     """Average path length of unsuccessful search in a Binary Search Tree (BST)."""
@@ -173,33 +179,33 @@ class StationAdaptiveMLPipeline:
     def __init__(self, storage_dir="ml/models"):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
+        # Strictly 3-Parameter + Thermodynamic features:
         self.feature_names = [
             "temperature_norm",
             "humidity_norm",
             "pressure_norm",
-            "wind_speed_norm",
-            "temp_diff_lag",
+            "vapor_pressure_deficit_norm",
+            "dew_point_depr_norm",
+            "temp_rate_of_change",
             "diurnal_hour_sin",
             "diurnal_hour_cos",
-            "dew_point_depr_norm",
         ]
 
     def preprocess_dataset(self, rows):
         valid = []
         scrubbed = 0
         for r in rows:
-            temp = float(r.get("temperature_c", r.get("temp", -9999)))
-            hum = float(r.get("humidity_pct", r.get("hum", -9999)))
-            pres = float(r.get("pressure_hpa", r.get("pres", -9999)))
-            wind = float(r.get("wind_speed_kmh", r.get("wind", 10.0)))
-            rain = float(r.get("rainfall_mm", r.get("rain", 0.0)))
+            temp = float(r.get("temperature_c", r.get("temperature", r.get("temp", -9999))))
+            hum = float(r.get("humidity_pct", r.get("humidity", r.get("hum", -9999))))
+            pres = float(r.get("pressure_hpa", r.get("pressure", r.get("pres", -9999))))
+            hour = int(r.get("hour", 12))
 
             # Exclude hardware error flags and impossible physical bounds
-            if temp < -40 or temp > 65 or hum < 0 or hum > 100 or pres < 750 or pres > 1100 or wind < 0 or wind > 250:
+            if temp < -50 or temp > 65 or hum < 0 or hum > 105 or pres < 700 or pres > 1150:
                 scrubbed += 1
                 continue
 
-            valid.append({"temp": temp, "hum": hum, "pres": pres, "wind": wind, "rain": rain, "hour": 12})
+            valid.append({"temp": temp, "hum": hum, "pres": pres, "hour": hour})
 
         return valid, scrubbed
 
@@ -211,7 +217,6 @@ class StationAdaptiveMLPipeline:
         temps = [r["temp"] for r in valid_rows]
         hums = [r["hum"] for r in valid_rows]
         press = [r["pres"] for r in valid_rows]
-        winds = [r["wind"] for r in valid_rows]
 
         t_mean = sum(temps) / n
         t_std = math.sqrt(sum((x - t_mean) ** 2 for x in temps) / n) or 1.0
@@ -219,14 +224,22 @@ class StationAdaptiveMLPipeline:
         h_std = math.sqrt(sum((x - h_mean) ** 2 for x in hums) / n) or 1.0
         p_mean = sum(press) / n
         p_std = math.sqrt(sum((x - p_mean) ** 2 for x in press) / n) or 1.0
-        w_mean = sum(winds) / n
-        w_std = math.sqrt(sum((x - w_mean) ** 2 for x in winds) / n) or 1.0
+
+        # Compute thermodynamic VPD and Dew point statistics
+        vpds = [thermo_engine.vapor_pressure_deficit(r["temp"], r["hum"]) for r in valid_rows]
+        vpd_mean = sum(vpds) / n
+        vpd_std = math.sqrt(sum((x - vpd_mean) ** 2 for x in vpds) / n) or 1.0
+
+        dew_deprs = [max(0.0, r["temp"] - thermo_engine.dew_point(r["temp"], r["hum"])) for r in valid_rows]
+        dew_mean = sum(dew_deprs) / n
+        dew_std = math.sqrt(sum((x - dew_mean) ** 2 for x in dew_deprs) / n) or 1.0
 
         stats = {
             "t_mean": t_mean, "t_std": t_std,
             "h_mean": h_mean, "h_std": h_std,
             "p_mean": p_mean, "p_std": p_std,
-            "w_mean": w_mean, "w_std": w_std,
+            "vpd_mean": vpd_mean, "vpd_std": vpd_std,
+            "dew_mean": dew_mean, "dew_std": dew_std,
         }
 
         X = []
@@ -234,22 +247,22 @@ class StationAdaptiveMLPipeline:
             prev_t = valid_rows[i - 1]["temp"] if i > 0 else r["temp"]
             temp_diff = (r["temp"] - prev_t) / t_std
 
-            hour_rad = (2 * math.pi * r["hour"]) / 24.0
+            hour_rad = (2 * math.pi * r.get("hour", 12)) / 24.0
             sin_hour = math.sin(hour_rad)
             cos_hour = math.cos(hour_rad)
 
-            dew_approx = r["temp"] - ((100.0 - r["hum"]) / 5.0)
-            dew_depr = max(0.0, r["temp"] - dew_approx) / 10.0
+            vpd_val = vpds[i]
+            dew_depr_val = dew_deprs[i]
 
             x_vec = [
                 round((r["temp"] - t_mean) / t_std, 3),
                 round((r["hum"] - h_mean) / h_std, 3),
                 round((r["pres"] - p_mean) / p_std, 3),
-                round((r["wind"] - w_mean) / w_std, 3),
+                round((vpd_val - vpd_mean) / vpd_std, 3),
+                round((dew_depr_val - dew_mean) / dew_std, 3),
                 round(temp_diff, 3),
                 round(sin_hour, 3),
                 round(cos_hour, 3),
-                round(dew_depr, 3),
             ]
             X.append(x_vec)
 
@@ -277,7 +290,7 @@ class StationAdaptiveMLPipeline:
                 "elevation": (profile or {}).get("elevation"),
                 "region": (profile or {}).get("region", "Local"),
             },
-            "algorithm": "Isolation Forest",
+            "algorithm": "Thermodynamic Isolation Forest with TreeSHAP",
             "version": version,
             "status": "PRODUCTION",
             "sha256": sha_hash,
@@ -327,33 +340,53 @@ class StationAdaptiveMLPipeline:
                 "status": "RULES_ONLY",
                 "anomaly_score": 0.0,
                 "reason": f"No active model found for {station_id}",
+                "xai_explanation": None
             }
 
         stats = model_card["normalization_stats"]
         t = float(observation.get("temperature", observation.get("temp", stats["t_mean"])))
         h = float(observation.get("humidity", observation.get("hum", stats["h_mean"])))
         p = float(observation.get("pressure", observation.get("pres", stats["p_mean"])))
-        w = float(observation.get("wind_speed", observation.get("wind", stats["w_mean"])))
+        hour = int(observation.get("hour", 12))
 
-        prev_t = float(last_observation.get("temperature", t)) if last_observation else t
+        prev_t = float(last_observation.get("temperature", last_observation.get("temp", t))) if last_observation else t
         t_diff = (t - prev_t) / stats["t_std"]
 
-        dew_approx = t - ((100.0 - h) / 5.0)
-        dew_depr = max(0.0, t - dew_approx) / 10.0
+        # Compute thermodynamic inputs
+        vpd = thermo_engine.vapor_pressure_deficit(t, h)
+        td = thermo_engine.dew_point(t, h)
+        dew_depr = max(0.0, t - td)
+
+        hour_rad = (2 * math.pi * hour) / 24.0
+        sin_hour = math.sin(hour_rad)
+        cos_hour = math.cos(hour_rad)
+
+        vpd_norm = (vpd - stats.get("vpd_mean", vpd)) / stats.get("vpd_std", 1.0)
+        dew_depr_norm = (dew_depr - stats.get("dew_mean", dew_depr)) / stats.get("dew_std", 1.0)
 
         x = [
             (t - stats["t_mean"]) / stats["t_std"],
             (h - stats["h_mean"]) / stats["h_std"],
             (p - stats["p_mean"]) / stats["p_std"],
-            (w - stats["w_mean"]) / stats["w_std"],
+            vpd_norm,
+            dew_depr_norm,
             t_diff,
-            0.0, 1.0,  # noon solar encoding
-            dew_depr,
+            sin_hour,
+            cos_hour,
         ]
 
         score = iforest.score_sample(x)
         threshold = model_card["training_summary"]["dynamic_threshold"]
         is_anomaly = score >= threshold
+
+        # Execute TreeSHAP explainability on every inference call
+        xai_result = TreeSHAPEngine.explain_instance(
+            x_vector=x,
+            trees=iforest.trees,
+            sub_sample_size=iforest.sub_sample_actual,
+            feature_names=self.feature_names,
+            base_threshold=threshold
+        )
 
         return {
             "station_id": station_id,
@@ -363,4 +396,9 @@ class StationAdaptiveMLPipeline:
             "threshold": threshold,
             "status": "ANOMALY" if is_anomaly else "NORMAL",
             "is_anomaly": is_anomaly,
+            "xai_explanation": xai_result,
+            "feature_vector": x
         }
+
+
+station_adaptive_pipeline = StationAdaptiveMLPipeline()

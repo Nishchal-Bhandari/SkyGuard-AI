@@ -10,7 +10,7 @@ export const ModelGovernance = () => {
   const isOperator = role === 'station_operator' || role === 'STATION_OPERATOR';
   const isAdmin = role === 'admin' || role === 'CENTRAL_ADMIN';
 
-  const defaultStation = isOperator && assignedStationId ? assignedStationId : (activeStationId || stations[0]?.id || 'AWS-07');
+  const defaultStation = isOperator && assignedStationId ? assignedStationId : (activeStationId || stations[0]?.id || '');
   const [selectedStationId, setSelectedStationId] = useState(defaultStation);
   const [dbModels, setDbModels] = useState([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);

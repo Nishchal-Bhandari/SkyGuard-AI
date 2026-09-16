@@ -1,5 +1,5 @@
-import sys
-sys.path.append('d:/SkyGuard-AI')
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import asyncio, httpx, json
 from backend.app.services.weather_service import weather_service
 
