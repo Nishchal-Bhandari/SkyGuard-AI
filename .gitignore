@@ -10,3 +10,4 @@ ml/models/
 backend/data/*.db-wal
 backend/data/*.db-shm
 .env
+scratch_*.py
