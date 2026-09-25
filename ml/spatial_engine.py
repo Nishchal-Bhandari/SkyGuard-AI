@@ -133,7 +133,8 @@ class SpatialIntelligenceEngine:
         
         peer_temps = [float(p.get("temp", p.get("readings", {}).get("temp", 25.0))) for p in nearby_stations]
         med_temp = get_median(peer_temps)
-        target_temp = float(target_station.get("readings", target_station.get("sensors", {})).get("temperature", target_station.get("temp", 25.0)))
+        t_val = target_station.get("sensors", target_station.get("readings", {})).get("temperature", target_station.get("temp", 25.0))
+        target_temp = float(t_val.get("value", t_val) if isinstance(t_val, dict) else t_val)
         res_temp = abs(target_temp - med_temp)
         
         med_z_T = get_median(peer_z_Ts)
