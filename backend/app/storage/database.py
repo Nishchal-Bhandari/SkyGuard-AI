@@ -4,6 +4,7 @@ import json
 import sqlite3
 import datetime
 import logging
+import hashlib
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Generator, Any, Dict, List, Optional, Tuple
@@ -365,6 +366,10 @@ def init_db():
                 cur.execute("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS evidence_data TEXT NOT NULL DEFAULT '{}';")
             except Exception:
                 pass
+            try:
+                cur.execute("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS normal_streak INTEGER NOT NULL DEFAULT 0;")
+            except Exception:
+                pass
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS model_registry (
@@ -580,6 +585,10 @@ def init_db():
                 cur.execute("ALTER TABLE incidents ADD COLUMN evidence_data TEXT NOT NULL DEFAULT '{}';")
             except Exception:
                 pass
+            try:
+                cur.execute("ALTER TABLE incidents ADD COLUMN normal_streak INTEGER NOT NULL DEFAULT 0;")
+            except Exception:
+                pass
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS model_registry (
@@ -637,6 +646,170 @@ def init_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_stations_status ON stations(status);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_admins_username ON admins(username);")
 
+        # -----------------------------------------------------------------
+        # Additive intelligence and audit entities shared by SQLite/Postgres
+        # -----------------------------------------------------------------
+        # These tables are intentionally append-oriented. They keep the raw
+        # telemetry contract separate from assessments, repairs, and model state.
+        extended_tables = [
+            """CREATE TABLE IF NOT EXISTS assessments (
+                id INTEGER PRIMARY KEY,
+                station_id TEXT NOT NULL,
+                source_timestamp TEXT NOT NULL,
+                quality_state TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                classification TEXT NOT NULL,
+                anomaly_score REAL,
+                confidence TEXT,
+                evidence_completeness REAL,
+                evidence_data TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS imputations (
+                id INTEGER PRIMARY KEY,
+                station_id TEXT NOT NULL,
+                source_timestamp TEXT NOT NULL,
+                parameter TEXT NOT NULL,
+                raw_value REAL,
+                imputed_value REAL,
+                method TEXT NOT NULL,
+                peer_list TEXT NOT NULL DEFAULT '[]',
+                confidence REAL,
+                assessment_id TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS sensor_health (
+                id INTEGER PRIMARY KEY,
+                station_id TEXT NOT NULL,
+                source_timestamp TEXT NOT NULL,
+                temperature_score REAL,
+                humidity_score REAL,
+                pressure_score REAL,
+                station_score REAL,
+                evidence_data TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS station_climatology (
+                id INTEGER PRIMARY KEY,
+                station_id TEXT NOT NULL,
+                parameter TEXT NOT NULL,
+                coefficients TEXT NOT NULL DEFAULT '{}',
+                robust_sigma REAL,
+                observation_count INTEGER NOT NULL DEFAULT 0,
+                model_version TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS fusion_coefficients (
+                id INTEGER PRIMARY KEY,
+                version TEXT NOT NULL,
+                coefficients TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'DEFAULT_PRIORS',
+                validation_metrics TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS station_neighbours (
+                station_id TEXT NOT NULL,
+                peer_station_id TEXT NOT NULL,
+                distance_km REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (station_id, peer_station_id)
+            )""",
+            """CREATE TABLE IF NOT EXISTS ingest_idempotency (
+                station_id TEXT NOT NULL,
+                source_timestamp TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'ACCEPTED',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (station_id, source_timestamp)
+            )""",
+            """CREATE TABLE IF NOT EXISTS shadow_scores (
+                id INTEGER PRIMARY KEY,
+                station_id TEXT NOT NULL,
+                model_version TEXT NOT NULL,
+                source_timestamp TEXT NOT NULL,
+                incumbent_score REAL,
+                candidate_score REAL,
+                result TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS drift_metrics (
+                id INTEGER PRIMARY KEY,
+                station_id TEXT NOT NULL,
+                model_version TEXT,
+                metric_name TEXT NOT NULL,
+                metric_value REAL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS retraining_candidates (
+                id INTEGER PRIMARY KEY,
+                station_id TEXT NOT NULL,
+                model_version TEXT NOT NULL,
+                gate_status TEXT NOT NULL DEFAULT 'PENDING',
+                gate_results TEXT NOT NULL DEFAULT '{}',
+                artifact_hash TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS config_audit (
+                id INTEGER PRIMARY KEY,
+                station_id TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                action TEXT NOT NULL,
+                before_state TEXT,
+                after_state TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS sensor_change_events (
+                id INTEGER PRIMARY KEY,
+                station_id TEXT NOT NULL,
+                parameter TEXT,
+                action TEXT NOT NULL,
+                details TEXT NOT NULL DEFAULT '{}',
+                actor TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS maintenance_tasks (
+                id INTEGER PRIMARY KEY,
+                station_id TEXT NOT NULL,
+                task_key TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                done INTEGER NOT NULL DEFAULT 0,
+                completed_by TEXT,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(station_id, task_key)
+            )""",
+            """CREATE TABLE IF NOT EXISTS maintenance_audit (
+                id INTEGER PRIMARY KEY,
+                station_id TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                snapshot TEXT NOT NULL DEFAULT '{}',
+                signature_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        ]
+        for table_sql in extended_tables:
+            cur.execute(table_sql)
+
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_assessments_station_time ON assessments(station_id, source_timestamp);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_health_station_time ON sensor_health(station_id, source_timestamp);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_maintenance_tasks_station ON maintenance_tasks(station_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_maintenance_audit_station ON maintenance_audit(station_id, id);")
+
+        # SQLite trigger is the final guard against accidental raw updates.
+        if not conn.is_postgres:
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS prevent_telemetry_raw_update
+                BEFORE UPDATE OF station_id, timestamp, grid_point, temperature, humidity,
+                    pressure, wind_speed, wind_direction, rainfall, solar, battery, signal,
+                    raw_payload, qc_flag ON telemetry
+                BEGIN
+                    SELECT RAISE(ABORT, 'raw telemetry is immutable; append a new record');
+                END;
+            """)
+
         # ---------------------------------------------------------------------
         # Idempotent Seed Data
         # ---------------------------------------------------------------------
@@ -663,9 +836,10 @@ def init_db():
 
 def insert_telemetry_batch(station_id: str, records: List[Dict[str, Any]]) -> Tuple[int, int]:
     """
-    Inserts or updates a batch of telemetry records atomically for station_id.
-    Uses fast batch pipelining (execute_batch / executemany) with ON CONFLICT resolution.
-    Returns (inserted_or_updated_count, error_count).
+    Inserts a batch of telemetry records atomically for station_id.
+    Existing source timestamps are ignored rather than overwritten. The
+    idempotency ledger records accepted rows and duplicate payload hashes.
+    Returns (inserted_count, error_count).
     """
     if not records:
         return 0, 0
@@ -715,18 +889,7 @@ def insert_telemetry_batch(station_id: str, records: List[Dict[str, Any]]) -> Tu
             wind_speed, wind_direction, rainfall, solar, battery, signal,
             raw_payload, qc_flag, created_at
         ) VALUES %s
-        ON CONFLICT (station_id, timestamp, grid_point) DO UPDATE SET
-            temperature = EXCLUDED.temperature,
-            humidity = EXCLUDED.humidity,
-            pressure = EXCLUDED.pressure,
-            wind_speed = EXCLUDED.wind_speed,
-            wind_direction = EXCLUDED.wind_direction,
-            rainfall = EXCLUDED.rainfall,
-            solar = EXCLUDED.solar,
-            battery = EXCLUDED.battery,
-            signal = EXCLUDED.signal,
-            raw_payload = EXCLUDED.raw_payload,
-            qc_flag = EXCLUDED.qc_flag;
+        ON CONFLICT (station_id, timestamp, grid_point) DO NOTHING;
     """
 
     sql_sqlite = """
@@ -735,31 +898,114 @@ def insert_telemetry_batch(station_id: str, records: List[Dict[str, Any]]) -> Tu
             wind_speed, wind_direction, rainfall, solar, battery, signal,
             raw_payload, qc_flag, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(station_id, timestamp, grid_point) DO UPDATE SET
-            temperature = excluded.temperature,
-            humidity = excluded.humidity,
-            pressure = excluded.pressure,
-            wind_speed = excluded.wind_speed,
-            wind_direction = excluded.wind_direction,
-            rainfall = excluded.rainfall,
-            solar = excluded.solar,
-            battery = excluded.battery,
-            signal = excluded.signal,
-            raw_payload = excluded.raw_payload,
-            qc_flag = excluded.qc_flag;
+        ON CONFLICT(station_id, timestamp, grid_point) DO NOTHING;
     """
 
     with get_db() as conn:
+        before_count = 0
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) AS count FROM telemetry WHERE station_id = ?", (clean_station_id,))
+        before_count = int((cur.fetchone() or {}).get("count", 0))
         if conn.is_postgres and PSYCOPG2_AVAILABLE:
             from psycopg2.extras import execute_values
             raw_cur = conn.conn.cursor()
             execute_values(raw_cur, sql_pg, param_tuples, page_size=2000)
             raw_cur.close()
         else:
-            cur = conn.cursor()
             cur.executemany(sql_sqlite, param_tuples)
+        cur.execute("SELECT COUNT(*) AS count FROM telemetry WHERE station_id = ?", (clean_station_id,))
+        after_count = int((cur.fetchone() or {}).get("count", 0))
+        inserted_count = max(0, after_count - before_count)
 
-    return len(param_tuples), error_count
+        # Keep an append-only source timestamp ledger for replay and conflict review.
+        ledger_rows = []
+        for values in param_tuples:
+            payload_hash = hashlib.sha256(json.dumps(values, default=str).encode()).hexdigest()
+            ledger_rows.append((values[0], values[1], payload_hash, "ACCEPTED"))
+        if ledger_rows:
+            sql_ledger = """
+                INSERT INTO ingest_idempotency (station_id, source_timestamp, payload_hash, state)
+                VALUES %s
+                ON CONFLICT(station_id, source_timestamp) DO NOTHING
+            """
+            sql_ledger_sqlite = """
+                INSERT INTO ingest_idempotency (station_id, source_timestamp, payload_hash, state)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(station_id, source_timestamp) DO NOTHING
+            """
+            if conn.is_postgres and PSYCOPG2_AVAILABLE:
+                from psycopg2.extras import execute_values
+                raw_cur = conn.conn.cursor()
+                execute_values(raw_cur, sql_ledger, ledger_rows, page_size=2000)
+                raw_cur.close()
+            else:
+                cur.executemany(sql_ledger_sqlite, ledger_rows)
+
+    return inserted_count, error_count
+
+
+def persist_assessment(station_id: str, assessment: Dict[str, Any], source_timestamp: Optional[str] = None) -> None:
+    """Persist an additive assessment record without changing raw telemetry."""
+    clean_id = station_id.strip().upper()
+    timestamp = source_timestamp or datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with get_db() as conn:
+        cur = conn.cursor()
+        if conn.is_postgres:
+            cur.execute("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM assessments")
+            next_id = int((cur.fetchone() or {}).get("next_id", 1))
+        else:
+            next_id = None
+        columns = "id, station_id, source_timestamp, quality_state, severity, classification, anomaly_score, confidence, evidence_completeness, evidence_data"
+        values = (next_id, clean_id, timestamp, assessment.get("quality_state", "VALID"), assessment.get("severity", "NONE"), assessment.get("classification", "NORMAL"), assessment.get("anomaly_score"), assessment.get("confidence"), assessment.get("evidence_completeness"), json.dumps(assessment, default=str)) if next_id is not None else (clean_id, timestamp, assessment.get("quality_state", "VALID"), assessment.get("severity", "NONE"), assessment.get("classification", "NORMAL"), assessment.get("anomaly_score"), assessment.get("confidence"), assessment.get("evidence_completeness"), json.dumps(assessment, default=str))
+        placeholders = "?, ?, ?, ?, ?, ?, ?, ?, ?, ?" if next_id is not None else "?, ?, ?, ?, ?, ?, ?, ?, ?"
+        if next_id is None:
+            columns = "station_id, source_timestamp, quality_state, severity, classification, anomaly_score, confidence, evidence_completeness, evidence_data"
+        cur.execute("""
+            INSERT INTO assessments (""" + columns + ") VALUES (" + placeholders + ")", values)
+
+
+def _decode_assessment_row(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Convert persisted JSON evidence into the API assessment contract."""
+    if not row:
+        return None
+    result = dict(row)
+    raw_evidence = result.pop("evidence_data", "{}")
+    try:
+        evidence = json.loads(raw_evidence) if isinstance(raw_evidence, str) else raw_evidence
+    except json.JSONDecodeError:
+        evidence = {}
+    result["assessment_id"] = result.pop("id")
+    result["evidence"] = evidence if isinstance(evidence, dict) else {}
+    return result
+
+
+def get_latest_assessment(station_id: str) -> Optional[Dict[str, Any]]:
+    """Return the most recently persisted assessment for a station."""
+    clean_id = station_id.strip().upper()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM assessments
+            WHERE station_id = ?
+            ORDER BY source_timestamp DESC, id DESC
+            LIMIT 1
+        """, (clean_id,))
+        return _decode_assessment_row(cur.fetchone())
+
+
+def list_assessments(station_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+    """Return bounded, newest-first assessment history for a station."""
+    clean_id = station_id.strip().upper()
+    safe_limit = max(1, min(int(limit), 500))
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM assessments
+            WHERE station_id = ?
+            ORDER BY source_timestamp DESC, id DESC
+            LIMIT ?
+        """, (clean_id, safe_limit))
+        return [_decode_assessment_row(row) for row in cur.fetchall()]
 
 
 def get_station_telemetry_stats(station_id: str) -> Dict[str, Any]:
@@ -1101,6 +1347,14 @@ def clear_active_fault(station_id: str):
         cur.execute("DELETE FROM active_faults WHERE station_id = ?", (clean_id,))
 
 
+def clear_all_active_faults() -> int:
+    """Clear every synthetic fault used by the deterministic demo lab."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM active_faults")
+        return cur.rowcount
+
+
 def get_active_fault(station_id: str) -> Optional[Dict[str, Any]]:
     clean_id = station_id.strip().upper()
     with get_db() as conn:
@@ -1330,6 +1584,7 @@ def create_or_update_incident(incident_data: Dict[str, Any]) -> Dict[str, Any]:
                         recommended_actions = %s,
                         evidence_ids = %s,
                         evidence_data = %s,
+                        normal_streak = 0,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                 """, (
@@ -1356,6 +1611,7 @@ def create_or_update_incident(incident_data: Dict[str, Any]) -> Dict[str, Any]:
                         recommended_actions = ?,
                         evidence_ids = ?,
                         evidence_data = ?,
+                        normal_streak = 0,
                         updated_at = ?
                     WHERE id = ?
                 """, (
@@ -1429,20 +1685,22 @@ def resolve_open_incidents_for_station(station_id: str, reason: str = "Telemetry
     with get_db() as conn:
         cur = conn.cursor()
         if conn.is_postgres:
+            cur.execute("UPDATE incidents SET normal_streak = normal_streak + 1 WHERE station_id = %s AND status = 'open'", (clean_id,))
             cur.execute("""
                 UPDATE incidents SET
                     status = 'resolved',
                     updated_at = CURRENT_TIMESTAMP,
                     action_taken = 'AUTO_RESOLVED'
-                WHERE station_id = %s AND status = 'open'
+                WHERE station_id = %s AND status = 'open' AND normal_streak >= 3
             """, (clean_id,))
         else:
+            cur.execute("UPDATE incidents SET normal_streak = normal_streak + 1 WHERE station_id = ? AND status = 'open'", (clean_id,))
             cur.execute("""
                 UPDATE incidents SET
                     status = 'resolved',
                     updated_at = ?,
                     action_taken = 'AUTO_RESOLVED'
-                WHERE station_id = ? AND status = 'open'
+                WHERE station_id = ? AND status = 'open' AND normal_streak >= 3
             """, (now_iso, clean_id))
         return cur.rowcount
 
@@ -1468,11 +1726,172 @@ def list_incidents(station_id: Optional[str] = None, status: Optional[str] = Non
         return [_format_incident_row(dict(r)) for r in rows]
 
 
-def clear_all_incidents() -> int:
+def clear_all_incidents(station_id: Optional[str] = None) -> int:
+    """Permanently delete incidents from the database, optionally scoped to one station."""
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("DELETE FROM incidents;")
-        return getattr(cur, "rowcount", 0)
+        if station_id:
+            cur.execute("DELETE FROM incidents WHERE station_id = ?", (station_id.strip().upper(),))
+        else:
+            cur.execute("DELETE FROM incidents;")
+        return getattr(cur, "rowcount", 0) or 0
+
+
+# -----------------------------------------------------------------------------
+# Field Maintenance & Sensor Calibration Persistence
+# -----------------------------------------------------------------------------
+
+DEFAULT_MAINTENANCE_TASKS = [
+    {
+        "task_key": "chk-1",
+        "title": "Clean Multi-Plate Radiation Shield",
+        "description": "Remove dirt, algae, insect nests, and debris from the aspirated temperature & humidity sensor housing.",
+    },
+    {
+        "task_key": "chk-2",
+        "title": "Inspect Tipping Bucket Rain Gauge",
+        "description": "Clear funnel filter of silt, verify tipping bucket pivot balance, and test reed switch closure.",
+    },
+    {
+        "task_key": "chk-3",
+        "title": "Check Solar PV Panel & Float Battery Voltage",
+        "description": "Clean photovoltaic glass surface, inspect charge controller terminals, and verify float voltage (>12.4V).",
+    },
+    {
+        "task_key": "chk-4",
+        "title": "Inspect Barometric Pressure Static Port",
+        "description": "Verify Gore-Tex microporous vent filter is free from moisture condensation and atmospheric dust.",
+    },
+    {
+        "task_key": "chk-5",
+        "title": "Verify Ultrasonic / Mechanical Anemometer Alignment",
+        "description": "Check mast level, confirm true Geographic North offset orientation, and check bearing friction.",
+    },
+    {
+        "task_key": "chk-6",
+        "title": "Verify 4G/GSM Cellular Antenna & RSSI",
+        "description": "Inspect antenna coaxial water-tight sealing, check signal strength (RSSI > -85 dBm), and test uplink.",
+    },
+]
+
+
+def _format_maintenance_task_row(r: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "task_key": r.get("task_key"),
+        "title": r.get("title"),
+        "description": r.get("description") or "",
+        "done": bool(r.get("done")),
+        "completed_by": r.get("completed_by"),
+        "completed_at": r.get("completed_at"),
+        "updated_at": r.get("updated_at"),
+    }
+
+
+def get_station_maintenance_tasks(station_id: str) -> List[Dict[str, Any]]:
+    """Return the persisted maintenance checklist for a station, seeding defaults on first access."""
+    clean_id = station_id.strip().upper()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM maintenance_tasks WHERE station_id = ? ORDER BY id ASC", (clean_id,))
+        rows = cur.fetchall()
+        if not rows:
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            if conn.is_postgres:
+                cur.execute("SELECT COALESCE(MAX(id), 0) AS max_id FROM maintenance_tasks")
+                base_id = int((cur.fetchone() or {}).get("max_id", 0))
+                seed_rows = [
+                    (base_id + i + 1, clean_id, t["task_key"], t["title"], t["description"], 0, None, None, now_iso)
+                    for i, t in enumerate(DEFAULT_MAINTENANCE_TASKS)
+                ]
+                cur.executemany("""
+                    INSERT INTO maintenance_tasks
+                        (id, station_id, task_key, title, description, done, completed_by, completed_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (station_id, task_key) DO NOTHING
+                """, seed_rows)
+            else:
+                seed_rows = [
+                    (clean_id, t["task_key"], t["title"], t["description"], 0, None, None, now_iso)
+                    for t in DEFAULT_MAINTENANCE_TASKS
+                ]
+                cur.executemany("""
+                    INSERT INTO maintenance_tasks
+                        (station_id, task_key, title, description, done, completed_by, completed_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(station_id, task_key) DO NOTHING
+                """, seed_rows)
+            cur.execute("SELECT * FROM maintenance_tasks WHERE station_id = ? ORDER BY id ASC", (clean_id,))
+            rows = cur.fetchall()
+        return [_format_maintenance_task_row(dict(r)) for r in rows]
+
+
+def set_maintenance_task_state(station_id: str, task_key: str, done: bool, actor: str) -> List[Dict[str, Any]]:
+    """Persist a checklist item's completion state and return the refreshed checklist."""
+    clean_id = station_id.strip().upper()
+    get_station_maintenance_tasks(clean_id)  # ensure defaults are seeded
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE maintenance_tasks SET
+                done = ?,
+                completed_by = ?,
+                completed_at = ?,
+                updated_at = ?
+            WHERE station_id = ? AND task_key = ?
+        """, (1 if done else 0, actor if done else None, now_iso if done else None, now_iso, clean_id, task_key.strip()))
+        if cur.rowcount == 0:
+            raise ValueError(f"Maintenance task '{task_key}' not found for station '{clean_id}'")
+    return get_station_maintenance_tasks(clean_id)
+
+
+def sign_maintenance_audit(station_id: str, actor: str) -> Dict[str, Any]:
+    """Snapshot the current checklist state into an immutable, hash-signed audit record."""
+    clean_id = station_id.strip().upper()
+    tasks = get_station_maintenance_tasks(clean_id)
+    snapshot = json.dumps(tasks, default=str, sort_keys=True)
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    signature_hash = hashlib.sha256(f"{clean_id}:{actor}:{now_iso}:{snapshot}".encode()).hexdigest()
+    with get_db() as conn:
+        cur = conn.cursor()
+        if conn.is_postgres:
+            cur.execute("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM maintenance_audit")
+            new_id = int((cur.fetchone() or {}).get("next_id", 1))
+            cur.execute("""
+                INSERT INTO maintenance_audit (id, station_id, actor, snapshot, signature_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (new_id, clean_id, actor, snapshot, signature_hash, now_iso))
+        else:
+            cur.execute("""
+                INSERT INTO maintenance_audit (station_id, actor, snapshot, signature_hash, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (clean_id, actor, snapshot, signature_hash, now_iso))
+            new_id = cur.lastrowid
+    return {
+        "id": new_id,
+        "station_id": clean_id,
+        "actor": actor,
+        "signature_hash": signature_hash,
+        "created_at": now_iso,
+        "tasks_completed": sum(1 for t in tasks if t["done"]),
+        "tasks_total": len(tasks),
+    }
+
+
+def list_maintenance_audit(station_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """Return the newest-first signed maintenance audit history for a station."""
+    clean_id = station_id.strip().upper()
+    safe_limit = max(1, min(int(limit), 200))
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, station_id, actor, signature_hash, created_at
+            FROM maintenance_audit
+            WHERE station_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+        """, (clean_id, safe_limit))
+        return [dict(r) for r in cur.fetchall()]
 
 
 def adjudicate_incident(incident_id: str, action: str, operator_name: str = "Operator") -> Optional[Dict[str, Any]]:

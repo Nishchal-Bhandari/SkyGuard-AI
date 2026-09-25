@@ -295,12 +295,15 @@ export const StationUpload = () => {
     activePollId.current = currentPollId;
     
     let jobStatus = "RUNNING";
+    let errorCount = 0;
     
     while (jobStatus === "RUNNING" && activePollId.current === currentPollId) {
       try {
         const statusRes = await apiClient.getTrainingJobStatus(stationId, jobId);
         if (activePollId.current !== currentPollId) return; // Superseded by another loop or unmounted
         
+        errorCount = 0; // Reset error count on success
+
         if (statusRes && (statusRes.success || statusRes.status)) {
           jobStatus = statusRes.status;
           const completed = Array.isArray(statusRes.completed_stages)
@@ -345,6 +348,13 @@ export const StationUpload = () => {
         }
       } catch (e) {
         console.warn("[StationUpload] Polling error:", e.message);
+        errorCount += 1;
+        if (errorCount >= 5) {
+          setPipelineState('ERROR');
+          setErrorMessage("Lost connection to server during training. Please check backend.");
+          tacticalAudio.playAlarm();
+          break;
+        }
       }
       
       if (jobStatus === "RUNNING" && activePollId.current === currentPollId) {

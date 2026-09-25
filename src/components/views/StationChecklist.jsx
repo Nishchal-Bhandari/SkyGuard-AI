@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useWeather } from '../../context/WeatherContext';
 import { DEFAULT_MAINTENANCE_CHECKLIST } from '../../utils/seedData';
 import { tacticalAudio } from '../../utils/audio';
 
 export const StationChecklist = () => {
-  const { checklists, updateChecklist, activeStationId, stations, incidents, setCurrentView } = useWeather();
+  const { checklists, updateChecklist, activeStationId, stations, incidents, setCurrentView, submitMaintenanceAudit } = useWeather();
+  const [isSigning, setIsSigning] = useState(false);
   const station = stations.find(s => s.id?.toUpperCase() === activeStationId?.toUpperCase()) || stations[0] || {};
   const stationTasks = checklists[activeStationId] || DEFAULT_MAINTENANCE_CHECKLIST;
 
@@ -28,9 +29,17 @@ export const StationChecklist = () => {
   const stationIncidents = incidents.filter(i => i.station_id === activeStationId);
   const completedCount = stationTasks.filter(t => t.done).length;
 
-  const handleSignAudit = () => {
-    tacticalAudio.playSuccess();
-    alert(`Maintenance protocol for ${activeStationId} signed and submitted to audit log.`);
+  const handleSignAudit = async () => {
+    if (isSigning) return;
+    setIsSigning(true);
+    const res = await submitMaintenanceAudit(activeStationId);
+    setIsSigning(false);
+    if (res.success) {
+      const { audit } = res;
+      alert(`Maintenance protocol for ${activeStationId} signed and submitted to audit log.\nSignature: ${audit.signature_hash.slice(0, 16)}\u2026\nTasks verified: ${audit.tasks_completed}/${audit.tasks_total}`);
+    } else {
+      alert(`Failed to submit maintenance audit: ${res.error}`);
+    }
   };
 
   return (
@@ -39,8 +48,8 @@ export const StationChecklist = () => {
         <div className="cyber-card-title">
           <i className="fa-solid fa-list-check text-cyan"></i> FIELD MAINTENANCE & SENSOR CALIBRATION
         </div>
-        <button className="cyber-btn btn-sm btn-primary" onClick={handleSignAudit}>
-          <i className="fa-solid fa-signature"></i> Sign & Submit Audit Log
+        <button className="cyber-btn btn-sm btn-primary" onClick={handleSignAudit} disabled={isSigning}>
+          <i className={`fa-solid ${isSigning ? 'fa-spinner fa-spin' : 'fa-signature'}`}></i> {isSigning ? 'Signing…' : 'Sign & Submit Audit Log'}
         </button>
       </div>
       <div className="cyber-card-body">

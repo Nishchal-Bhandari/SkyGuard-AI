@@ -9,7 +9,7 @@ from backend.app.storage.database import (
     adjudicate_incident,
     clear_all_incidents
 )
-from backend.app.api.v1.auth import get_current_user, get_optional_user
+from backend.app.api.v1.auth import get_current_user, require_admin
 
 router = APIRouter(tags=["Incident Triage & Adjudication"])
 
@@ -22,7 +22,7 @@ class AdjudicatePayload(BaseModel):
 def get_incidents(
     station_id: Optional[str] = Query(None, description="Optional station ID filter"),
     status: Optional[str] = Query(None, description="Optional incident status: open, acknowledged, resolved"),
-    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Returns the queue of anomaly incidents.
@@ -30,7 +30,7 @@ def get_incidents(
     - Central Admins receive incidents across the entire fleet.
     """
     filter_station = station_id
-    if current_user and current_user.get("role") == "station_operator":
+    if current_user.get("role") == "station_operator":
         filter_station = str(current_user.get("station_id", "")).strip().upper()
 
     incidents = list_incidents(station_id=filter_station, status=status)
@@ -45,7 +45,7 @@ def get_incidents(
 @router.get("/incidents/{incident_id}")
 def get_incident_by_id(
     incident_id: str,
-    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Retrieves a single incident by ID with full evidence graph and reason codes.
@@ -55,7 +55,7 @@ def get_incident_by_id(
     if not incident:
         raise HTTPException(status_code=404, detail=f"Incident '{clean_id}' not found")
 
-    if current_user and current_user.get("role") == "station_operator":
+    if current_user.get("role") == "station_operator":
         user_station = str(current_user.get("station_id", "")).strip().upper()
         if incident["station_id"] != user_station:
             raise HTTPException(
@@ -104,14 +104,18 @@ def adjudicate(
 
 @router.delete("/incidents")
 def delete_all_incidents(
-    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+    station_id: Optional[str] = Query(None, description="Optional: restrict deletion to a single station"),
+    current_user: Dict[str, Any] = Depends(require_admin)
 ):
     """
-    Clears all incidents in the global incident queue.
+    Permanently deletes incidents from the database. Restricted to Central Admin.
+    When station_id is provided, only that station's incidents are removed.
     """
-    count = clear_all_incidents()
+    scope = station_id.strip().upper() if station_id else None
+    count = clear_all_incidents(station_id=scope)
     return {
         "success": True,
-        "message": "Global incident queue cleared successfully",
+        "message": f"Incident queue cleared for station '{scope}'" if scope else "Global incident queue cleared successfully",
+        "station_id": scope,
         "cleared_count": count
     }

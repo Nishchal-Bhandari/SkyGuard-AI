@@ -105,6 +105,20 @@ def require_station(current_user: Dict[str, Any] = Depends(get_current_user)) ->
         )
     return current_user
 
+
+def require_station_access(station_id: str, current_user: Dict[str, Any]) -> Dict[str, Any]:
+    """Enforce the station boundary for every station-scoped route."""
+    clean_id = station_id.strip().upper()
+    role = current_user.get("role")
+    if role == "admin":
+        return current_user
+    if role != "station_operator" or str(current_user.get("station_id", "")).strip().upper() != clean_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Station identity violation: cannot access '{clean_id}'."
+        )
+    return current_user
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------

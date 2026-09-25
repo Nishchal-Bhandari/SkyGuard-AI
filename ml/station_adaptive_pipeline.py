@@ -194,11 +194,21 @@ class StationAdaptiveMLPipeline:
     def preprocess_dataset(self, rows):
         valid = []
         scrubbed = 0
+        def get_val(r, *keys, default=-9999.0):
+            for k in keys:
+                v = r.get(k)
+                if v is not None and v != "":
+                    try:
+                        return float(v)
+                    except (ValueError, TypeError):
+                        pass
+            return float(default)
+
         for r in rows:
-            temp = float(r.get("temperature_c", r.get("temperature", r.get("temp", -9999))))
-            hum = float(r.get("humidity_pct", r.get("humidity", r.get("hum", -9999))))
-            pres = float(r.get("pressure_hpa", r.get("pressure", r.get("pres", -9999))))
-            hour = int(r.get("hour", 12))
+            temp = get_val(r, "temperature_c", "temperature", "temp", default=-9999.0)
+            hum = get_val(r, "humidity_pct", "humidity", "hum", default=-9999.0)
+            pres = get_val(r, "pressure_hpa", "pressure", "pres", default=-9999.0)
+            hour = int(get_val(r, "hour", default=12))
 
             # Exclude hardware error flags and impossible physical bounds
             if temp < -50 or temp > 65 or hum < 0 or hum > 105 or pres < 700 or pres > 1150:

@@ -13,6 +13,7 @@ from backend.app.api.v1.telemetry import router as telemetry_router
 from backend.app.api.v1.models import router as models_router
 from backend.app.api.v1.faults import router as faults_router
 from backend.app.api.v1.incidents import router as incidents_router
+from backend.app.api.v1.maintenance import router as maintenance_router
 from backend.app.services.weather_service import weather_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -63,6 +64,7 @@ app.include_router(telemetry_router, prefix="/api/v1")
 app.include_router(models_router, prefix="/api/v1")
 app.include_router(faults_router, prefix="/api/v1")
 app.include_router(incidents_router, prefix="/api/v1")
+app.include_router(maintenance_router, prefix="/api/v1")
 app.include_router(stations_router, prefix="/api/v1")
 
 @app.get("/api/v1/health", tags=["Diagnostics"])

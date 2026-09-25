@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 SkyGuard-AI — Sensor Health Index (SHI) & Predictive Maintenance Engine (Pure Python)
-Tracks individual sensor degradation, calibration drift rates, noise jitter,
-and computes Remaining Useful Life (RUL) in days to prevent sensor outages.
+    Tracks individual sensor degradation, calibration drift rates, noise jitter,
+    and computes a labelled degradation projection for maintenance planning.
 """
 
 import math
@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 
 class SensorHealthEngine:
     """
-    Computes 0-100% Sensor Health Index (SHI) and Remaining Useful Life (RUL)
+    Computes 0-100% Sensor Health Index (SHI) and a degradation projection
     for Temperature, Pressure, and Humidity transducers.
     """
 
@@ -62,14 +62,15 @@ class SensorHealthEngine:
             hum_health -= 15.0
             pres_health -= 10.0
 
-        # Apply general status penalties
-        if current_status == "CRITICAL":
+        # A corroborated atmospheric event must not be treated as sensor damage.
+        health_status = "NORMAL" if current_status == "REGIONAL_EVENT" else current_status
+        if health_status == "CRITICAL":
             temp_health -= 40.0
             hum_health -= 40.0
             pres_health -= 40.0
-        elif current_status == "LOCALIZED_ANOMALY":
+        elif health_status == "LOCALIZED_ANOMALY":
             temp_health -= 25.0
-        elif current_status == "SUSPECT":
+        elif health_status == "SUSPECT":
             temp_health -= 15.0
 
         # Apply battery and signal systemic deductions
@@ -79,11 +80,11 @@ class SensorHealthEngine:
 
         overall_health = round((temp_health * 0.45) + (hum_health * 0.30) + (pres_health * 0.25), 1)
 
-        # Estimate Remaining Useful Life (RUL) in Days
-        rul_days = cls._estimate_rul_days(overall_health, drift_rate_c_per_day, flatline_detected, battery_v)
+        # This is a trend-based projection, not validated failure-time prediction.
+        projection_days = cls._estimate_rul_days(overall_health, drift_rate_c_per_day, flatline_detected, battery_v)
 
         # Predictive Maintenance Actionable Advisory
-        maintenance_advisory = cls._generate_advisory(overall_health, temp_health, hum_health, pres_health, drift_rate_c_per_day, battery_v, rul_days)
+        maintenance_advisory = cls._generate_advisory(overall_health, temp_health, hum_health, pres_health, drift_rate_c_per_day, battery_v, projection_days)
 
         return {
             "station_id": station_id,
@@ -106,8 +107,10 @@ class SensorHealthEngine:
                 }
             },
             "predictive_maintenance": {
-                "remaining_useful_life_days": rul_days,
-                "urgency": "IMMEDIATE" if rul_days <= 3 else ("HIGH" if rul_days <= 14 else ("MEDIUM" if rul_days <= 45 else "LOW")),
+                "degradation_projection_days": projection_days,
+                "remaining_useful_life_days": projection_days,
+                "projection_method": "trend_extrapolation_heuristic",
+                "urgency": "IMMEDIATE" if projection_days <= 3 else ("HIGH" if projection_days <= 14 else ("MEDIUM" if projection_days <= 45 else "LOW")),
                 "maintenance_advisory": maintenance_advisory
             },
             "power_telemetry": {

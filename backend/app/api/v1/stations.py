@@ -6,7 +6,7 @@ from typing import Optional, List, Dict, Any, Union
 
 from backend.app.storage.database import get_db, get_station_qc_config
 from backend.app.auth.security import hash_password
-from backend.app.api.v1.auth import require_admin, get_current_user, get_optional_user
+from backend.app.api.v1.auth import require_admin, get_current_user, require_station_access
 
 router = APIRouter(tags=["Station Management"])
 
@@ -24,6 +24,14 @@ class CreateStationRequest(BaseModel):
     elevation: Optional[float] = Field(default=0.0, ge=-500.0, le=9000.0)
     region: Optional[str] = Field(default="Assigned Region", max_length=128)
     status: Optional[str] = Field(default="ACTIVE", pattern="^(ACTIVE|INACTIVE)$")
+
+class UpdateStationRequest(BaseModel):
+    station_name: Optional[str] = Field(default=None, min_length=2, max_length=128)
+    latitude: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    longitude: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
+    elevation: Optional[float] = Field(default=None, ge=-500.0, le=9000.0)
+    region: Optional[str] = Field(default=None, max_length=128)
+
 
 class StationSummaryResponse(BaseModel):
     id: int
@@ -219,7 +227,7 @@ def batch_create_presets(presets: List[PresetStationItem], admin_user: Dict[str,
     return {"success": True, "insertedCount": inserted_count, "message": f"Provisioned {inserted_count} preset stations"}
 
 @router.get("/stations/{station_id}", response_model=StationSummaryResponse)
-def get_station_by_id(station_id: str, current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)):
+def get_station_by_id(station_id: str, current_user: Dict[str, Any] = Depends(get_current_user)):
     """
     Authoritative Station Profile Access:
     - Central Admin can access any station.
@@ -227,14 +235,7 @@ def get_station_by_id(station_id: str, current_user: Optional[Dict[str, Any]] = 
     """
     target_id = station_id.strip().upper()
     
-    # Station Identity Enforcement
-    if current_user and current_user.get("role") == "station_operator":
-        user_station_id = current_user.get("station_id", "").strip().upper()
-        if user_station_id != target_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Station identity violation: Authenticated as '{user_station_id}', cannot access '{target_id}'"
-            )
+    require_station_access(target_id, current_user)
     
     with get_db() as conn:
         cursor = conn.cursor()
@@ -293,6 +294,58 @@ def toggle_station_status(station_id: str, payload: StatusToggleRequest, admin_u
             "station_id": target_id,
             "new_status": payload.status,
             "message": f"Station {target_id} status updated to {payload.status}"
+        }
+
+@router.put("/admin/stations/{station_id}", response_model=Dict[str, Any])
+def update_station(station_id: str, payload: UpdateStationRequest, admin_user: Dict[str, Any] = Depends(require_admin)):
+    """
+    Central Admin endpoint: Edits station details (name, region, coordinates).
+    """
+    target_id = station_id.strip().upper()
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM stations WHERE station_id = ?", (target_id,))
+        if not cursor.fetchone():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Weather station '{target_id}' not found."
+            )
+        
+        updates = []
+        params = []
+        
+        if payload.station_name is not None:
+            updates.append("station_name = ?")
+            params.append(payload.station_name.strip())
+        if payload.latitude is not None:
+            updates.append("latitude = ?")
+            params.append(payload.latitude)
+        if payload.longitude is not None:
+            updates.append("longitude = ?")
+            params.append(payload.longitude)
+        if payload.elevation is not None:
+            updates.append("elevation = ?")
+            params.append(payload.elevation)
+        if payload.region is not None:
+            updates.append("region = ?")
+            params.append(payload.region)
+            
+        if not updates:
+            return {"success": True, "station_id": target_id, "message": "No changes requested."}
+            
+        updates.append("updated_at = ?")
+        params.append(now_iso)
+        params.append(target_id)
+        
+        query = f"UPDATE stations SET {', '.join(updates)} WHERE station_id = ?"
+        cursor.execute(query, tuple(params))
+        
+        return {
+            "success": True,
+            "station_id": target_id,
+            "message": f"Station {target_id} updated successfully."
         }
 
 @router.post("/admin/stations/{station_id}/reset-password", response_model=Dict[str, Any])

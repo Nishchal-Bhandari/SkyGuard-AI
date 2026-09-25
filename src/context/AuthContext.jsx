@@ -133,6 +133,15 @@ export const AuthProvider = ({ children }) => {
     setStationCredentials([]);
   };
 
+  // A backend 401 on any authenticated route means the token is missing, expired, or
+  // invalid. Without this, the UI kept showing stale cached data while every API call
+  // silently failed. Force the app back to the login screen so the user can re-authenticate.
+  useEffect(() => {
+    const handleSessionExpired = () => logout();
+    window.addEventListener("skyguard:session-expired", handleSessionExpired);
+    return () => window.removeEventListener("skyguard:session-expired", handleSessionExpired);
+  }, []);
+
   /**
    * Provision New Station Account in SQLite Database
    */
@@ -230,6 +239,22 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  /**
+   * Edit Station Details in SQLite/PostgreSQL Database
+   */
+  const editStationCredential = async (stationId, updateData) => {
+    if (session.role !== 'admin' && session.role !== 'CENTRAL_ADMIN') {
+      return { success: false, message: "ACCESS DENIED: Only Central Admin can edit station details." };
+    }
+    try {
+      await apiClient.updateStation(stationId, updateData);
+      await refreshStationList();
+      return { success: true };
+    } catch (err) {
+      return { success: false, message: err.message };
+    }
+  };
+
   return (
     <AuthContext.Provider value={{
       session,
@@ -241,9 +266,9 @@ export const AuthProvider = ({ children }) => {
       stationCredentials,
       isLoadingStations,
       refreshStationList,
-      login,
-      logout,
+      login,      logout,
       createStationCredential,
+      editStationCredential,
       batchRegisterStationCredentials,
       toggleStationStatus,
       resetStationPassword

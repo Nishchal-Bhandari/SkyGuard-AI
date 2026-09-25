@@ -19,8 +19,8 @@ from backend.app.auth.security import hash_password, verify_password, create_acc
 from backend.app.api.v1.auth import login_admin, login_station, AdminLoginRequest, StationLoginRequest
 from backend.app.api.v1.stations import (
     create_station, list_stations_admin, get_station_by_id,
-    toggle_station_status, reset_station_password,
-    CreateStationRequest, StatusToggleRequest, ResetPasswordRequest
+    toggle_station_status, reset_station_password, update_station,
+    CreateStationRequest, StatusToggleRequest, ResetPasswordRequest, UpdateStationRequest
 )
 from fastapi import HTTPException
 
@@ -241,5 +241,28 @@ class TestSkyGuardAuthSystem(unittest.TestCase):
         new_login = login_station(StationLoginRequest(username="operator_shimla", password="newResetPass@2026"))
         self.assertTrue(new_login.success)
 
+    def test_07_admin_update_station_details(self):
+        """Test Admin updating station details (name, region, coordinates)"""
+        admin_user = {"sub": "admin", "role": "admin"}
+        update_req = UpdateStationRequest(
+            station_name="Shimla High Ridge Updated",
+            latitude=31.1100,
+            longitude=77.1800,
+            elevation=2250.0,
+            region="Himachal Himalayas"
+        )
+        res = update_station("AWS-88", update_req, admin_user=admin_user)
+        self.assertTrue(res["success"])
+        self.assertEqual(res["station_id"], "AWS-88")
+
+        # Verify updated values
+        st = get_station_by_id("AWS-88", current_user=admin_user)
+        self.assertEqual(st.station_name, "Shimla High Ridge Updated")
+        self.assertEqual(st.latitude, 31.1100)
+        self.assertEqual(st.longitude, 77.1800)
+        self.assertEqual(st.elevation, 2250.0)
+        self.assertEqual(st.region, "Himachal Himalayas")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

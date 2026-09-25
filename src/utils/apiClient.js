@@ -61,6 +61,13 @@ class ApiClient {
 
       if (!response.ok) {
         const errorDetail = typeof data.detail === 'object' ? JSON.stringify(data.detail) : (data.detail || data.message || `Request failed with HTTP ${response.status}`);
+        // A 401 on any authenticated route means the session is dead (missing/expired/invalid
+        // token). Login endpoints return 401 for bad credentials, which is a normal flow the
+        // login screen already handles, so they must not trigger a forced session reset.
+        if (response.status === 401 && !endpoint.startsWith("/auth/")) {
+          this.clearToken();
+          window.dispatchEvent(new CustomEvent("skyguard:session-expired", { detail: { endpoint } }));
+        }
         throw new Error(errorDetail);
       }
 
@@ -139,6 +146,13 @@ class ApiClient {
     return await this.request(`/stations/${stationId}`);
   }
 
+  async updateStation(stationId, updateData) {
+    return await this.request(`/admin/stations/${stationId}`, {
+      method: "PUT",
+      body: JSON.stringify(updateData)
+    });
+  }
+
   async toggleStationStatus(stationId, newStatus) {
     return await this.request(`/admin/stations/${stationId}/status`, {
       method: "PATCH",
@@ -179,6 +193,14 @@ class ApiClient {
     return await this.request(`/stations/${stationId}/telemetry/stats`);
   }
 
+  async getLatestStationAssessment(stationId) {
+    return await this.request(`/stations/${stationId}/assessments/latest`);
+  }
+
+  async getStationAssessmentHistory(stationId, limit = 100) {
+    return await this.request(`/stations/${stationId}/assessments?limit=${encodeURIComponent(limit)}`);
+  }
+
   async getFleetLiveState() {
     return await this.request(`/stations/fleet/live`);
   }
@@ -197,6 +219,12 @@ class ApiClient {
   async resetFault(stationId) {
     return await this.request(`/stations/${stationId}/faults/reset`, {
       method: "POST"
+    });
+  }
+
+  async resetFleet() {
+    return await this.request('/stations/fleet/faults/reset', {
+      method: 'POST'
     });
   }
 
@@ -219,8 +247,9 @@ class ApiClient {
     });
   }
 
-  async clearAllIncidents() {
-    return await this.request('/incidents', {
+  async clearAllIncidents(stationId = null) {
+    const qs = stationId ? `?station_id=${encodeURIComponent(stationId)}` : '';
+    return await this.request(`/incidents${qs}`, {
       method: "DELETE"
     });
   }
@@ -266,6 +295,31 @@ class ApiClient {
   }
   async getStationQC(stationId) {
     return await this.request(`/stations/${stationId}/qc`);
+  }
+
+  // -------------------------------------------------------------------------
+  // Field Maintenance & Sensor Calibration Endpoints
+  // -------------------------------------------------------------------------
+
+  async getMaintenanceTasks(stationId) {
+    return await this.request(`/stations/${stationId}/maintenance/tasks`);
+  }
+
+  async updateMaintenanceTask(stationId, taskKey, done) {
+    return await this.request(`/stations/${stationId}/maintenance/tasks/${encodeURIComponent(taskKey)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ done })
+    });
+  }
+
+  async submitMaintenanceAudit(stationId) {
+    return await this.request(`/stations/${stationId}/maintenance/submit`, {
+      method: "POST"
+    });
+  }
+
+  async getMaintenanceHistory(stationId, limit = 50) {
+    return await this.request(`/stations/${stationId}/maintenance/history?limit=${encodeURIComponent(limit)}`);
   }
 }
 

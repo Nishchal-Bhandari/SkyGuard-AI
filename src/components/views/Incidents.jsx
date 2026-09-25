@@ -61,6 +61,8 @@ export const Incidents = () => {
       tacticalAudio.playSuccess();
     } catch (e) {
       console.error("[Incidents View] Failed to clear incidents:", e);
+      tacticalAudio.playAlarm();
+      window.alert(`Failed to clear incident queue: ${e.message}`);
     } finally {
       setIsClearing(false);
     }
@@ -121,16 +123,18 @@ export const Incidents = () => {
               <i className={`fa-solid fa-rotate ${isRefreshing ? 'fa-spin' : ''}`}></i>
             </button>
 
-            <button
-              className="cyber-btn btn-sm btn-danger"
-              onClick={handleClearAllIncidents}
-              disabled={isClearing || baseIncidents.length === 0}
-              style={{ padding: '5px 10px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '5px' }}
-              title="Permanently Clear Global Incident Queue"
-            >
-              <i className="fa-solid fa-trash-can"></i>
-              <span>CLEAR QUEUE</span>
-            </button>
+            {!isOperator && (
+              <button
+                className="cyber-btn btn-sm btn-danger"
+                onClick={handleClearAllIncidents}
+                disabled={isClearing || baseIncidents.length === 0}
+                style={{ padding: '5px 10px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '5px' }}
+                title="Permanently Clear Global Incident Queue"
+              >
+                <i className="fa-solid fa-trash-can"></i>
+                <span>CLEAR QUEUE</span>
+              </button>
+            )}
           </div>
         </div>
         <div className="cyber-card-body" style={{ padding: 0 }}>

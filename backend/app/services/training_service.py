@@ -18,7 +18,8 @@ from backend.app.storage.database import (
     list_station_models,
     rollback_model_version,
     update_training_job_stage,
-    calibrate_station_qc_matrix
+    calibrate_station_qc_matrix,
+    get_station_telemetry_stats
 )
 from backend.app.services.model_storage import model_storage_service
 
@@ -49,9 +50,13 @@ class StationAdaptiveTrainingService:
         self.pipeline = StationAdaptiveMLPipeline(storage_dir=model_storage_service.base_path)
 
     def start_training(self, station_id: str, custom_version: Optional[str] = None) -> Dict[str, Any]:
-        """Synchronously initializes the training job and returns its info so the frontend can poll."""
-        clean_id = station_id.strip().upper()
+        """Synchronously initializes the training job record and returns immediately.
         
+        The caller (models.py endpoint) is responsible for scheduling
+        execute_training_job via FastAPI BackgroundTasks.
+        """
+        clean_id = station_id.strip().upper()
+
         # Determine model version
         if custom_version:
             target_version = custom_version
@@ -63,17 +68,23 @@ class StationAdaptiveTrainingService:
                 next_minor = len(existing_models)
                 target_version = f"v1.{next_minor}"
 
-        # Create Training Job in RUNNING state
+        # Create Training Job record in RUNNING state — fast DB insert only
         job_id = create_training_job(clean_id, target_version)
-        records = fetch_historical_telemetry(clean_id)
-        
+
+        # Quick stats query so frontend shows an estimated row count
+        try:
+            stats = get_station_telemetry_stats(clean_id)
+            record_count = stats.get("total_records", 0)
+        except Exception:
+            record_count = 0
+
         return {
             "success": True,
             "job_id": job_id,
             "station_id": clean_id,
             "model_version": target_version,
-            "valid_records": len(records),
-            "training_rows": len(records)
+            "valid_records": record_count,
+            "training_rows": record_count
         }
 
     def execute_training_job(self, job_id: int, station_id: str, target_version: str):
@@ -103,9 +114,10 @@ class StationAdaptiveTrainingService:
             with get_db() as conn:
                 cur = conn.cursor()
                 cur.execute("SELECT * FROM stations WHERE station_id = ?", (clean_id,))
-                station = cur.fetchone()
-                if not station:
+                station_row = cur.fetchone()
+                if not station_row:
                     raise ValueError(f"Weather station '{clean_id}' not found in registry.")
+                station = dict(station_row)
 
             station_profile = {
                 "name": station.get("station_name", clean_id),
@@ -122,18 +134,19 @@ class StationAdaptiveTrainingService:
                     f"Found {len(raw_telemetry)} records, minimum 20 required for robust training."
                 )
 
+            # raw_telemetry rows already have keys: temp, hum, pres, wind, rain, timestamp
+            # Extract hour from timestamp for diurnal feature; default to 12 if missing
             formatted_rows = []
             for r in raw_telemetry:
-                formatted_rows.append({
-                    "temp": r.get("temp"),
-                    "hum": r.get("hum"),
-                    "pres": r.get("pres"),
-                    "wind": r.get("wind", 10.0),
-                    "rain": r.get("rain", 0.0),
-                    "hour": 12,
-                    "timestamp": str(r.get("timestamp", ""))
-                })
-                
+                ts = str(r.get("timestamp", ""))
+                try:
+                    hour = int(ts[11:13]) if len(ts) >= 13 else 12
+                except (ValueError, IndexError):
+                    hour = 12
+                row = dict(r)
+                row["hour"] = hour
+                formatted_rows.append(row)
+
             completed_stages.append("Data Ingested")
             update_training_job_stage(job_id, "Data Ingested", completed_stages)
             time.sleep(0.3)  # Paced stage completion transition

@@ -47,7 +47,7 @@ export const IncidentModal = ({ incident, onClose }) => {
 
   return (
     <div className="cyber-modal-overlay active">
-      <div className="cyber-modal" style={{ maxWidth: '780px', width: '95%' }}>
+      <div className="cyber-modal" style={{ maxWidth: '880px', width: '95%', padding: '24px' }}>
         <div className="modal-header">
           <div className="modal-title" id="modal-inc-title">
             <i className="fa-solid fa-triangle-exclamation text-crimson"></i> ANOMALY INCIDENT EVIDENCE: {incident.id}
@@ -55,13 +55,15 @@ export const IncidentModal = ({ incident, onClose }) => {
           <button className="modal-close-btn" onClick={onClose}>&times;</button>
         </div>
 
-        <div className="modal-body" id="modal-inc-content" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div className="modal-body" id="modal-inc-content" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {/* Status Header Strip */}
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
             <span className={`cyber-badge ${badgeClass}`}>{incident.severity?.toUpperCase()} SEVERITY</span>
             <span className={`cyber-badge ${stateBadge}`}>{incident.quality_state}</span>
+            <span className="cyber-badge badge-offline">QUALITY: {finalAss.quality_state || 'SUSPECT'}</span>
+            <span className="cyber-badge badge-offline">SEVERITY: {(finalAss.severity || incident.severity || 'UNKNOWN').toString().toUpperCase()}</span>
             <span className="cyber-badge badge-offline">STATION: {incident.station_id} ({incident.station_name})</span>
-            <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+            <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
               {new Date(incident.created_at).toLocaleString()}
             </span>
           </div>
@@ -78,12 +80,12 @@ export const IncidentModal = ({ incident, onClose }) => {
               border: '1px solid var(--border-subtle)',
               borderTop: '2px solid var(--neon-cyan)',
               borderRadius: '4px',
-              padding: '10px 12px'
+              padding: '16px'
             }}>
-              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.72rem', color: 'var(--neon-cyan)', marginBottom: '8px', letterSpacing: '0.5px' }}>
+              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.75rem', color: 'var(--neon-cyan)', marginBottom: '12px', letterSpacing: '0.5px' }}>
                 <i className="fa-solid fa-brain"></i> 1. MODEL PREDICTION
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.74rem', fontFamily: 'var(--font-mono)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.75rem', fontFamily: 'var(--font-mono)', lineHeight: '1.6' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: 'var(--text-muted)' }}>Anomaly Score:</span>
                   <span style={{ fontWeight: 600, color: modelPred.is_anomaly ? 'var(--crimson-alert)' : 'var(--text-primary)' }}>
@@ -122,12 +124,12 @@ export const IncidentModal = ({ incident, onClose }) => {
               border: '1px solid var(--border-subtle)',
               borderTop: '2px solid #8b5cf6',
               borderRadius: '4px',
-              padding: '10px 12px'
+              padding: '16px'
             }}>
-              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.72rem', color: '#a78bfa', marginBottom: '8px', letterSpacing: '0.5px' }}>
+              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.75rem', color: '#a78bfa', marginBottom: '12px', letterSpacing: '0.5px' }}>
                 <i className="fa-solid fa-satellite-dish"></i> 2. NEARBY STATION EVIDENCE
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.74rem', fontFamily: 'var(--font-mono)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.75rem', fontFamily: 'var(--font-mono)', lineHeight: '1.6' }}>
                 {closestPeer ? (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -160,11 +162,17 @@ export const IncidentModal = ({ incident, onClose }) => {
                         {spatialEv.spatial_result}
                       </span>
                     </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Agreement Index:</span>
+                      <span style={{ color: 'var(--text-primary)', fontSize: '0.68rem' }}>
+                        {spatialEv.spatial_analysis?.agreement_index ?? spatialEv.agreement_index ?? 'N/A'}
+                      </span>
+                    </div>
                   </>
                 ) : (
                   <>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '0.72rem', padding: '4px 0' }}>
-                      No eligible stations within 60 km radius. Spatial validation unavailable.
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', padding: '24px 0', textAlign: 'center', lineHeight: '1.5' }}>
+                      No eligible stations within 60 km radius.<br/>Spatial validation unavailable.
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px', marginTop: '2px' }}>
                       <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Spatial Result:</span>
@@ -187,12 +195,12 @@ export const IncidentModal = ({ incident, onClose }) => {
               border: '1px solid var(--border-subtle)',
               borderTop: '2px solid #eab308',
               borderRadius: '4px',
-              padding: '10px 12px'
+              padding: '16px'
             }}>
-              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.72rem', color: '#facc15', marginBottom: '8px', letterSpacing: '0.5px' }}>
+              <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.75rem', color: '#facc15', marginBottom: '12px', letterSpacing: '0.5px' }}>
                 <i className="fa-solid fa-microchip"></i> 3. SENSOR / QC EVIDENCE
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.74rem', fontFamily: 'var(--font-mono)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.75rem', fontFamily: 'var(--font-mono)', lineHeight: '1.6' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: 'var(--text-muted)' }}>Normal Envelope:</span>
                   <span style={{ color: 'var(--text-primary)' }}>
@@ -241,10 +249,12 @@ export const IncidentModal = ({ incident, onClose }) => {
             background: 'rgba(5, 8, 17, 0.85)',
             border: '1px solid var(--neon-cyan)',
             borderRadius: '4px',
-            padding: '10px 14px',
+            padding: '16px 20px',
+            marginTop: '16px',
+            marginBottom: '8px',
             display: 'flex',
             alignItems: 'center',
-            gap: '14px',
+            gap: '20px',
             flexWrap: 'wrap'
           }}>
             <div>
@@ -267,6 +277,14 @@ export const IncidentModal = ({ incident, onClose }) => {
               <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)', marginTop: '2px', fontStyle: 'italic' }}>
                 "{finalAss.interpretation || incident.explanation}"
               </div>
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '5px', fontFamily: 'var(--font-mono)' }}>
+                EVIDENCE COMPLETENESS: {Math.round((finalAss.evidence_completeness ?? 0) * 100)}% | READINESS: {finalAss.readiness?.tier || evidence.readiness?.tier || 'UNKNOWN'}
+              </div>
+              {finalAss.fusion && (
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '4px', fontFamily: 'var(--font-mono)' }}>
+                  FUSION SCORE: <strong style={{ color: 'var(--neon-cyan)' }}>{finalAss.fusion.score}</strong> | {finalAss.fusion.coefficient_status}
+                </div>
+              )}
             </div>
           </div>
 
@@ -299,17 +317,26 @@ export const IncidentModal = ({ incident, onClose }) => {
           )}
         </div>
 
-        {/* Modal Footer — EXACT EXISTING 3 OPERATOR ACTIONS */}
-        <div className="modal-footer">
-          <button className="cyber-btn btn-sm" onClick={() => handleAction('ACKNOWLEDGE')}>
-            <i className="fa-solid fa-check"></i> Acknowledge
-          </button>
-          <button className="cyber-btn btn-sm btn-green" onClick={() => handleAction('GENUINE')}>
-            <i className="fa-solid fa-cloud-bolt"></i> Confirm Genuine Extreme
-          </button>
-          <button className="cyber-btn btn-sm btn-danger" onClick={() => handleAction('REJECT')}>
-            <i className="fa-solid fa-ban"></i> Flag Defect / Invalidate
-          </button>
+        {/* Modal Footer */}
+        <div className="modal-footer" style={{ marginTop: '24px', borderTop: '1px solid rgba(255, 255, 255, 0.1)', paddingTop: '20px' }}>
+          {['resolved', 'closed', 'rejected'].includes(incident.status?.toLowerCase()) || incident.action_taken ? (
+            <div style={{ width: '100%', textAlign: 'center', padding: '8px', background: 'rgba(0, 255, 102, 0.1)', border: '1px solid var(--emerald-success)', borderRadius: '4px', color: 'var(--emerald-success)', fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
+              <i className="fa-solid fa-lock" style={{ marginRight: '8px' }}></i>
+              INCIDENT {incident.status?.toUpperCase()} — Adjudicated {incident.action_taken ? `as ${incident.action_taken}` : ''} by {incident.adjudicated_by || 'Operator'}
+            </div>
+          ) : (
+            <>
+              <button className="cyber-btn btn-sm" onClick={() => handleAction('ACKNOWLEDGE')}>
+                <i className="fa-solid fa-check"></i> Acknowledge
+              </button>
+              <button className="cyber-btn btn-sm btn-green" onClick={() => handleAction('GENUINE')}>
+                <i className="fa-solid fa-cloud-bolt"></i> Confirm Genuine Extreme
+              </button>
+              <button className="cyber-btn btn-sm btn-danger" onClick={() => handleAction('REJECT')}>
+                <i className="fa-solid fa-ban"></i> Flag Defect / Invalidate
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

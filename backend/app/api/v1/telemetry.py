@@ -5,8 +5,14 @@ import datetime
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, status, Body, BackgroundTasks
 from typing import Optional, Dict, Any, List
 
-from backend.app.storage.database import insert_telemetry_batch, get_station_telemetry_stats, calibrate_station_qc
-from backend.app.api.v1.auth import get_current_user, get_optional_user
+from backend.app.storage.database import (
+    get_latest_assessment,
+    get_station_telemetry_stats,
+    insert_telemetry_batch,
+    list_assessments,
+    calibrate_station_qc,
+)
+from backend.app.api.v1.auth import get_current_user, require_station_access
 from backend.app.services.weather_service import weather_service
 
 import logging
@@ -17,7 +23,7 @@ router = APIRouter(tags=["Telemetry Ingestion & Stats"])
 
 @router.get("/stations/fleet/live")
 def get_fleet_live_state(
-    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Returns the real-time live evaluated state of the entire fleet.
@@ -25,7 +31,7 @@ def get_fleet_live_state(
     Station operator gets only their station.
     """
     try:
-        role = current_user.get("role") if current_user else None
+        role = current_user.get("role")
         fleet_state = weather_service.get_fleet_state() or []
         
         if role == "station_operator":
@@ -271,36 +277,72 @@ async def upload_station_telemetry(
             }
         )
 
-    # Ingest into Cloud PostgreSQL in a single safe transaction
-    inserted_count, error_count = insert_telemetry_batch(clean_target_id, parsed_rows)
-    stats = get_station_telemetry_stats(clean_target_id)
+    def _background_ingest(station_id, parsed_rows):
+        insert_telemetry_batch(station_id, parsed_rows)
+        calibrate_station_qc(station_id)
 
-    # Trigger station-specific background QC calibration
-    background_tasks.add_task(calibrate_station_qc, clean_target_id)
+    # Ingest into Cloud PostgreSQL in a background worker to prevent blocking
+    background_tasks.add_task(_background_ingest, clean_target_id, parsed_rows)
+    stats = get_station_telemetry_stats(clean_target_id)
 
     return {
         "success": True,
         "station_id": clean_target_id,
-        "rows_uploaded": inserted_count,
-        "total_records": stats.get("total_records", inserted_count),
-        "rows_rejected": len(rejected_rows) + error_count,
+        "rows_queued": len(parsed_rows),
+        "total_records": stats.get("total_records", 0) + len(parsed_rows),
+        "rows_rejected": len(rejected_rows),
         "validation_warnings": warnings[:15],
         "rejection_sample": rejected_rows[:5],
-        "message": f"Successfully ingested {inserted_count} telemetry records into Cloud PostgreSQL for {clean_target_id}."
+        "message": f"Successfully queued {len(parsed_rows)} telemetry records for background ingestion for {clean_target_id}."
     }
 
 
 @router.get("/stations/{station_id}/telemetry/stats")
 def get_station_telemetry_statistics(
     station_id: str,
-    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Returns high-level telemetry metadata for station_id from Cloud PostgreSQL.
     """
     clean_id = station_id.strip().upper()
+    require_station_access(clean_id, current_user)
     stats = get_station_telemetry_stats(clean_id)
     return {
         "success": True,
         **stats
+    }
+
+
+@router.get("/stations/{station_id}/assessments/latest")
+def get_latest_station_assessment(
+    station_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Return the latest persisted server-generated assessment and evidence."""
+    clean_id = station_id.strip().upper()
+    require_station_access(clean_id, current_user)
+    assessment = get_latest_assessment(clean_id)
+    return {
+        "success": True,
+        "station_id": clean_id,
+        "has_assessment": assessment is not None,
+        "assessment": assessment,
+    }
+
+
+@router.get("/stations/{station_id}/assessments")
+def get_station_assessment_history(
+    station_id: str,
+    limit: int = 100,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Return a bounded newest-first history of persisted assessments."""
+    clean_id = station_id.strip().upper()
+    require_station_access(clean_id, current_user)
+    assessments = list_assessments(clean_id, limit)
+    return {
+        "success": True,
+        "station_id": clean_id,
+        "assessments": assessments,
     }

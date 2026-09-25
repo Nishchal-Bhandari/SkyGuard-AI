@@ -52,6 +52,7 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
                     VALUES ('AWS-08', 'Visakhapatnam Coast', 'operator_vizag', 'hash', 17.686, 83.218, 45, 'Eastern Coast', 'ACTIVE', '2026-08-01', '2026-08-01')
                 """)
             cur.execute("DELETE FROM telemetry WHERE station_id IN ('AWS-07', 'AWS-08')")
+            cur.execute("DELETE FROM assessments WHERE station_id IN ('AWS-07', 'AWS-08')")
             cur.execute("DELETE FROM model_registry WHERE station_id IN ('AWS-07', 'AWS-08')")
             cur.execute("DELETE FROM training_jobs WHERE station_id IN ('AWS-07', 'AWS-08')")
 
@@ -60,6 +61,7 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         with get_db() as conn:
             cur = conn.cursor()
             cur.execute("DELETE FROM telemetry WHERE station_id IN ('AWS-07', 'AWS-08')")
+            cur.execute("DELETE FROM assessments WHERE station_id IN ('AWS-07', 'AWS-08')")
             cur.execute("DELETE FROM model_registry WHERE station_id IN ('AWS-07', 'AWS-08')")
             cur.execute("DELETE FROM training_jobs WHERE station_id IN ('AWS-07', 'AWS-08')")
         try:
@@ -271,6 +273,30 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         self.assertTrue(data["success"])
         # Should have accepted the valid records and handled duplicate safely
         self.assertGreaterEqual(data["rows_uploaded"], 1)
+
+    def test_12_assessment_endpoint_is_station_scoped(self):
+        """Persisted assessment evidence is available only to an authorized station."""
+        from backend.app.storage.database import persist_assessment
+
+        persist_assessment("AWS-07", {
+            "quality_state": "SUSPECT",
+            "severity": "HIGH",
+            "classification": "LOCALIZED_ANOMALY",
+            "anomaly_score": 0.91,
+            "confidence": "HIGH",
+            "evidence_completeness": 0.75,
+            "evidence_vector": {"z_ml": 0.91},
+        }, source_timestamp="2099-08-03T10:00:00+00:00")
+
+        response = self.client.get(
+            "/api/v1/stations/AWS-07/assessments/latest",
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["has_assessment"])
+        self.assertEqual(data["assessment"]["classification"], "LOCALIZED_ANOMALY")
+        self.assertEqual(data["assessment"]["evidence"]["evidence_vector"]["z_ml"], 0.91)
 
 
 if __name__ == "__main__":

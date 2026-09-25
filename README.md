@@ -115,3 +115,131 @@ npm run build
 ```
 * **Station HUD (`StationHUD.jsx`):** Integrated Spatial Intelligence panel with interactive radius slider ($10-200\,\text{km}$), peer distance table, and live Anomaly Fusion classification.
 * **Geospatial Radar (`FleetMap.jsx`):** Renders geodetic radius circle around active station with distance vector tooltips to all peers in range.
+
+---
+
+## Measured performance
+
+Every figure below is produced by running the command shown. Nothing is hardcoded.
+
+```bash
+python -m eval.run_evaluation --profiles plateau,coastal,arid
+python -m pytest backend/tests/ ml/ ml/tests/ -q
+```
+
+| Metric | Value |
+|---|---|
+| Precision | 0.839 |
+| Recall (point-level) | 0.502 |
+| F1 | 0.628 |
+| False Positive Rate | 0.0102 |
+| Matthews Correlation Coefficient | 0.623 |
+| Event-level recall | 35 / 36 events |
+| Root-cause accuracy | 0.844 – 0.878 |
+| False alarms, uncontaminated data | 0.39 – 0.61 / station-day |
+| Latency | 1.24 ms mean, 1.40 ms p95, ~805 obs/s |
+| Test suite | 70 passed |
+
+> **These are results on controlled synthetic fault injection.** They measure the
+> system against our own fault model, not against real hardware failure, and are not
+> field-validated performance. Methodology, per-fault breakdown and limitations:
+> [`EVALUATION.md`](EVALUATION.md).
+
+---
+
+## Detection pipeline
+
+```
+raw observation
+  → data quality gate          sentinels, NaN, ranges, frozen runs, timestamp faults
+  → causal temporal features   lags, deltas, acceleration, rolling stats, EWMA, cyclic time
+  → CUSUM drift chart          systematic bias against learned hourly climatology
+  → multivariate consistency   dew point, RH bounds, rates, T–RH coupling, Mahalanobis
+  → station-adaptive Isolation Forest
+  → spatial consensus          elevation-corrected robust z against neighbouring stations
+  → evidence fusion            log-odds accumulation across six independent detectors
+  → persistence                SUSPECT → CONFIRMED hysteresis
+  → regional / local adjudication
+  → root cause classification
+  → confidence + severity
+  → explainable alert
+```
+
+Each stage is independently testable and independently inspectable in the UI.
+Architecture detail: [`MODEL_CARD.md`](MODEL_CARD.md).
+
+### The core parameter constraint
+
+The anomaly detector uses **only temperature, pressure, relative humidity and the
+observation timestamp**. `ml/feature_engine.py::FEATURE_NAMES` is the single source of
+truth and is written into every model card alongside an explicit
+`auxiliary_parameters_used_as_model_features: []`.
+
+Wind, rainfall, battery voltage and RSSI are **diagnostics only** and do not influence
+classification. Elevation is used solely to reduce peer observations to a common datum
+in the spatial layer — deployment metadata, never a predictive input.
+
+---
+
+## Two probabilities, deliberately
+
+| Quantity | Question | Peer agreement |
+|---|---|---|
+| `anomaly_probability` | Is this station's **sensor** faulty? | Strong evidence **against** |
+| `local_probability` | Is this reading **unusual** for this station? | Irrelevant |
+
+A regional weather event is exactly *local high, anomaly suppressed by peers*.
+Collapsing these into one number caused genuine frontal passages to be reported as
+NORMAL — the second number exists because of that measured failure.
+
+---
+
+## Quick start
+
+```bash
+pip install -r requirements.txt
+npm install
+
+npm run backend      # http://localhost:8000  (API docs at /docs)
+npm run dev          # http://localhost:5173
+```
+
+Demo credentials: `admin` / `sentinel2026` — **demonstration only**, not production
+credentials. CORS is open and station access keys are stored in plaintext so the
+credentials panel can display them; both are acceptable locally and must be changed
+before any real deployment.
+
+A station needs **≥100 clean observations** before it can be trained. This floor is
+derived (12 for the covariance model, 72 for full hourly climatology coverage, 20
+holdout rows at a 20% split) — below it the service refuses to train rather than
+registering a model that cannot support its own artifact.
+
+---
+
+## Documentation
+
+| File | Contents |
+|---|---|
+| [`EVALUATION.md`](EVALUATION.md) | Methodology, measured results, calibration, limitations |
+| [`MODEL_CARD.md`](MODEL_CARD.md) | Features, architecture, training requirements, what is not claimed |
+| [`DEMO_GUIDE.md`](DEMO_GUIDE.md) | 4-minute judging flow and expected questions |
+| [`future_improvement_plan.md`](future_improvement_plan.md) | Prioritised outstanding work with success criteria |
+
+---
+
+## What this is not
+
+A hackathon prototype built to be technically defensible — **not** a certified
+meteorological quality-control system. No WMO certification, no IMD deployment, no
+validated reliability model.
+
+Three limitations stated plainly, because they matter more than another feature would:
+
+1. **All metrics are synthetic.** No labelled real-data validation exists.
+2. **Confidence is not calibrated** — measured correlation with correctness −0.218.
+   The evidence breakdown is sound; the percentage is not yet usable as a probability.
+3. **Point recall (0.50) is well below event recall (0.97)** — long faults are caught
+   but flagged intermittently.
+
+Each is tracked with a method and a success criterion in
+[`future_improvement_plan.md`](future_improvement_plan.md).

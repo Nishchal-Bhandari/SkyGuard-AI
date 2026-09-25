@@ -9,6 +9,7 @@ export const StationHUD = () => {
   const { assignedStationId, role } = useAuth();
   const [inspectedPeerId, setInspectedPeerId] = useState(null);
   const [stationQC, setStationQC] = useState(null);
+  const [qcLoading, setQcLoading] = useState(false);
   const [showImputedStream, setShowImputedStream] = useState(false);
 
   // Fetch station-specific QC envelope from backend
@@ -16,9 +17,17 @@ export const StationHUD = () => {
     let isMounted = true;
     const stId = activeStationId || assignedStationId;
     if (!stId) return;
+    setQcLoading(true);
     apiClient.getStationQC(stId)
-      .then(res => { if (isMounted && res?.has_config) setStationQC(res.config); })
-      .catch(() => {});
+      .then(res => { 
+        if (isMounted) {
+          setStationQC(res?.has_config ? res.config : null);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (isMounted) setQcLoading(false);
+      });
     return () => { isMounted = false; };
   }, [activeStationId, assignedStationId]);
 
@@ -52,7 +61,7 @@ export const StationHUD = () => {
       }
   }
 
-  const activeModel = isInspectingPeer ? null : activeStationModels[activeStationId];
+  const activeModel = isInspectingPeer ? null : (activeStationModels[station.id] || activeStationModels[activeStationId]);
   const mlResult = station.ml_model;
   const spatialData = station.spatial_data;
   const finalAssessment = station.final_assessment;
@@ -84,7 +93,10 @@ export const StationHUD = () => {
   const humWmo = showImputedStream && selfHealing?.imputed_sensors?.humidity?.is_imputed ? 3 : (station.sensors?.humidity?.wmo_flag ?? 0);
   const presWmo = showImputedStream && selfHealing?.imputed_sensors?.pressure?.is_imputed ? 3 : (station.sensors?.pressure?.wmo_flag ?? 0);
 
-  const badgeClass = station.status === 'NORMAL' ? 'badge-normal' : station.status === 'SUSPECT' ? 'badge-suspect' : station.status === 'CRITICAL' ? 'badge-critical' : 'badge-extreme';
+  const badgeClass = station.status === 'NORMAL' ? 'badge-normal' : 
+                     (station.status === 'LOCALIZED_ANOMALY' || station.status === 'CRITICAL' || station.status === 'REJECTED') ? 'badge-critical' : 
+                     (station.status === 'REGIONAL_EVENT' || station.status === 'EXTREME') ? 'badge-extreme' : 
+                     'badge-suspect';
 
   const getWmoBadge = (flag) => {
     if (flag === 0) return <span className="cyber-badge badge-normal" style={{ fontSize: '0.62rem', padding: '1px 5px' }}>WMO 0: PASS</span>;
@@ -309,6 +321,8 @@ export const StationHUD = () => {
               <span style={{ color: 'var(--neon-cyan)' }}>
                 <i className="fa-solid fa-wand-magic-sparkles"></i> Imputed via {selfHealing.imputed_sensors.temperature.method} (Raw: {rawTemp}°C)
               </span>
+            ) : qcLoading ? (
+              'Loading Envelope...'
             ) : (
               stationQC ? `Normal Envelope: ${stationQC.temperature_normal_min}°C – ${stationQC.temperature_normal_max}°C` : 'Physical Limit: -50°C – 60°C'
             )}
@@ -560,7 +574,7 @@ export const StationHUD = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '10px', marginBottom: '10px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <span style={{ fontSize: '0.72rem', fontFamily: 'var(--font-tactical)', color: 'var(--text-muted)' }}>
-                    ANOMALY FUSION CLASSIFICATION:
+                    STATION + FLEET EVIDENCE FUSION:
                   </span>
                   <span className={`cyber-badge ${finalAssessment?.badge_class || 'badge-normal'}`} style={{ fontSize: '0.82rem', padding: '4px 10px' }}>
                     {finalAssessment?.classification || 'NORMAL'}
@@ -571,9 +585,39 @@ export const StationHUD = () => {
                 </div>
               </div>
 
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+                <span className="cyber-badge badge-normal" style={{ fontSize: '0.62rem' }}>
+                  STATION INTELLIGENCE: {mlResult?.has_model ? 'MODEL ACTIVE' : 'PHYSICS / QC ONLY'}
+                </span>
+                <span className={`cyber-badge ${spatialData?.spatial_analysis?.fleet_evidence_state === 'AVAILABLE' ? 'badge-normal' : 'badge-suspect'}`} style={{ fontSize: '0.62rem' }}>
+                  FLEET INTELLIGENCE: {spatialData?.spatial_analysis?.fleet_evidence_state || 'INCOMPLETE'}
+                </span>
+                <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', alignSelf: 'center' }}>
+                  READINESS: {station.readiness?.tier || 'UNKNOWN'} | PEERS: {spatialData?.eligible_peer_count ?? 0} | EVIDENCE: {Math.round((finalAssessment?.evidence_completeness ?? 0) * 100)}%
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px', fontFamily: 'var(--font-mono)', fontSize: '0.62rem' }}>
+                {Object.entries(finalAssessment?.evidence_vector || {}).map(([key, value]) => (
+                  <span key={key} style={{ color: 'var(--text-muted)' }}>
+                    {key.toUpperCase()}: <strong style={{ color: Number(value) > 0 ? 'var(--neon-amber)' : 'var(--text-secondary)' }}>{Number(value).toFixed(2)}</strong>
+                  </span>
+                ))}
+              </div>
+
+              {finalAssessment?.fusion && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', padding: '7px 9px', border: '1px solid var(--border-subtle)', background: 'rgba(0, 240, 255, 0.04)', fontFamily: 'var(--font-mono)', fontSize: '0.64rem' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>FUSION SCORE:</span>
+                  <strong style={{ color: 'var(--neon-cyan)' }}>{finalAssessment.fusion.score}</strong>
+                  <span style={{ color: 'var(--text-muted)' }}>LOGIT:</span>
+                  <strong style={{ color: 'var(--text-secondary)' }}>{finalAssessment.fusion.logit}</strong>
+                  <span className="cyber-badge badge-suspect" style={{ fontSize: '0.58rem' }}>{finalAssessment.fusion.coefficient_status}</span>
+                </div>
+              )}
+
               <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
                 <i className="fa-solid fa-circle-info text-cyan" style={{ marginRight: '6px' }}></i>
-                {finalAssessment?.interpretation || 'Awaiting real-time spatial evaluation...'}
+                {finalAssessment?.interpretation || spatialData?.spatial_analysis?.fleet_evidence_reason || 'Awaiting real-time station and fleet evaluation...'}
               </p>
             </div>
 
@@ -618,7 +662,10 @@ export const StationHUD = () => {
                           <td style={{ fontFamily: 'var(--font-mono)' }}>{peer.temp || peer.temperature}°C</td>
                           <td style={{ fontFamily: 'var(--font-mono)' }}>{peer.hum || peer.humidity}%</td>
                           <td>
-                            <span className={`cyber-badge ${peer.status === 'NORMAL' ? 'badge-normal' : 'badge-suspect'}`} style={{ fontSize: '0.65rem' }}>
+                            <span className={`cyber-badge ${peer.status === 'NORMAL' ? 'badge-normal' : 
+                               (peer.status === 'REGIONAL_EVENT' || peer.status === 'EXTREME' ? 'badge-extreme' : 
+                               (peer.status === 'LOCALIZED_ANOMALY' || peer.status === 'CRITICAL' || peer.status === 'REJECTED' ? 'badge-critical' : 'badge-suspect'))
+                            }`} style={{ fontSize: '0.65rem' }}>
                               {peer.status}
                             </span>
                           </td>

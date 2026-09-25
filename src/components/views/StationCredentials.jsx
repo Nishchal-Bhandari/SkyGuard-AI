@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { CredentialModal } from '../modals/CredentialModal';
+import { EditStationModal } from '../modals/EditStationModal';
 import { tacticalAudio } from '../../utils/audio';
 export const StationCredentials = () => {
   const { role, stationCredentials, toggleStationStatus, resetStationPassword, isLoadingStations } = useAuth();
   const [revealedPasswords, setRevealedPasswords] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [stationToEdit, setStationToEdit] = useState(null);
 
   const isAdmin = role === 'admin' || role === 'CENTRAL_ADMIN';
 
@@ -162,6 +165,14 @@ export const StationCredentials = () => {
                           <button
                             className="cyber-btn btn-sm"
                             style={{ padding: '4px 7px', fontSize: '0.7rem' }}
+                            onClick={() => { setStationToEdit(s); setEditModalOpen(true); }}
+                            title="Edit Station Details"
+                          >
+                            <i className="fa-solid fa-pen"></i> Edit
+                          </button>
+                          <button
+                            className="cyber-btn btn-sm"
+                            style={{ padding: '4px 7px', fontSize: '0.7rem' }}
                             onClick={() => handleResetPassword(s.stationId)}
                             title="Reset Access Passphrase"
                           >
@@ -180,6 +191,11 @@ export const StationCredentials = () => {
       </div>
 
       <CredentialModal isOpen={modalOpen} onClose={() => setModalOpen(false)} />
+      <EditStationModal 
+        isOpen={editModalOpen} 
+        onClose={() => { setEditModalOpen(false); setStationToEdit(null); }} 
+        station={stationToEdit} 
+      />
     </>
   );
 };

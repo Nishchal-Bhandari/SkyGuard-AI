@@ -66,15 +66,18 @@ export const WeatherProvider = ({ children }) => {
     } catch (e) {}
   }, []);
 
-  const clearAllIncidents = useCallback(async () => {
-    setIncidents([]);
+  // Deletes incidents from the authoritative database first; local/cache state is only
+  // cleared once the backend confirms the deletion, so failures never masquerade as success.
+  const clearAllIncidents = useCallback(async (stationId = null) => {
+    const res = await apiClient.clearAllIncidents(stationId);
     try {
-      localStorage.removeItem(INCIDENTS_CACHE_KEY);
-      localStorage.removeItem("skyguard_incidents_cache_v3");
-      localStorage.removeItem("skyguard_incidents_cache_v2");
-      await apiClient.clearAllIncidents().catch(() => {});
-    } catch (e) {}
-  }, []);
+      const incRes = await apiClient.getIncidents();
+      saveIncidents(incRes?.success && Array.isArray(incRes.incidents) ? incRes.incidents : []);
+    } catch (e) {
+      saveIncidents([]);
+    }
+    return res;
+  }, [saveIncidents]);
 
   const [qcConfig, setQcConfig] = useState(() => ({ ...INITIAL_QC_CONFIG }));
   const [modelRegistry, setModelRegistry] = useState(() => [...INITIAL_MODEL_REGISTRY]);
@@ -200,8 +203,10 @@ export const WeatherProvider = ({ children }) => {
 
   // Automatically select assigned station or first available station
   useEffect(() => {
-    if (isStationOperator(role) && assignedStationId) {
-      setActiveStationId(assignedStationId);
+    if (isStationOperator(role)) {
+      if (assignedStationId) {
+        setActiveStationId(assignedStationId);
+      }
     } else if (!activeStationId && stations.length > 0) {
       setActiveStationId(stations[0].id);
     }
@@ -537,9 +542,13 @@ export const WeatherProvider = ({ children }) => {
     }
   };
 
-  const clearFaults = async (stationId) => {
+  const clearFaults = async (stationId = null) => {
     try {
-      await apiClient.resetFault(stationId);
+      if (stationId) {
+        await apiClient.resetFault(stationId);
+      } else {
+        await apiClient.resetFleet();
+      }
       tacticalAudio.playClick();
       
       try {
@@ -549,9 +558,11 @@ export const WeatherProvider = ({ children }) => {
         }
       } catch (e) {}
       
-      syncLiveOpenMeteoData();
+      await syncLiveOpenMeteoData();
+      return { success: true };
     } catch(e) {
       console.error("[WeatherContext] Failed to clear fault:", e);
+      return { success: false, error: e.message };
     }
   };
 
@@ -587,8 +598,39 @@ export const WeatherProvider = ({ children }) => {
   };
 
 
-  const updateChecklist = (stationId, itemId, completed) => {
+  const mapMaintenanceTaskFromBackend = useCallback((t) => ({
+    id: t.task_key,
+    title: t.title,
+    desc: t.description,
+    done: !!t.done,
+    completed: !!t.done,
+    timestamp: t.completed_at ? new Date(t.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
+    completed_by: t.completed_by || null
+  }), []);
+
+  const refreshStationChecklist = useCallback(async (stId) => {
+    const targetId = stId || activeStationId;
+    if (!targetId) return;
+    try {
+      const res = await apiClient.getMaintenanceTasks(targetId);
+      if (res?.success && Array.isArray(res.tasks)) {
+        setChecklists(prev => ({ ...prev, [targetId]: res.tasks.map(mapMaintenanceTaskFromBackend) }));
+      }
+    } catch (e) {
+      console.warn("[WeatherContext] Could not fetch maintenance tasks:", e.message);
+    }
+  }, [activeStationId, mapMaintenanceTaskFromBackend]);
+
+  useEffect(() => {
+    if (activeStationId) {
+      refreshStationChecklist(activeStationId);
+    }
+  }, [activeStationId, refreshStationChecklist]);
+
+  // Persists checklist completion to the backend (survives reload / other operators).
+  const updateChecklist = useCallback(async (stationId, itemId, completed) => {
     if (!stationId) return;
+
     setChecklists(prev => {
       const currentList = (prev && prev[stationId] && prev[stationId].length > 0)
         ? prev[stationId]
@@ -606,7 +648,28 @@ export const WeatherProvider = ({ children }) => {
       );
       return { ...prev, [stationId]: updatedList };
     });
-  };
+
+    try {
+      const res = await apiClient.updateMaintenanceTask(stationId, itemId, !!completed);
+      if (res?.success && Array.isArray(res.tasks)) {
+        setChecklists(prev => ({ ...prev, [stationId]: res.tasks.map(mapMaintenanceTaskFromBackend) }));
+      }
+    } catch (e) {
+      console.error("[WeatherContext] Failed to persist maintenance task state:", e.message);
+    }
+  }, [mapMaintenanceTaskFromBackend]);
+
+  const submitMaintenanceAudit = useCallback(async (stationId) => {
+    if (!stationId) return { success: false, error: "No active station." };
+    try {
+      const res = await apiClient.submitMaintenanceAudit(stationId);
+      tacticalAudio.playSuccess();
+      return { success: true, audit: res.audit };
+    } catch (e) {
+      tacticalAudio.playAlarm();
+      return { success: false, error: e.message };
+    }
+  }, []);
 
   const trainStationModel = async (stationId, version = null) => {
     try {
@@ -753,6 +816,8 @@ export const WeatherProvider = ({ children }) => {
       externalDataLineage,
       checklists,
       updateChecklist,
+      refreshStationChecklist,
+      submitMaintenanceAudit,
       offlineBuffer,
       isOfflineMode,
       toggleOfflineMode,

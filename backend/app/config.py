@@ -48,6 +48,7 @@ MODEL_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
 SECRET_KEY = os.getenv("SKYGUARD_SECRET_KEY", "skyguard-sentinel-tactical-secret-key-2026-v2")
 TOKEN_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 Hours
+DEMO_MODE = os.getenv("DEMO_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 # Default Seed Configuration (Used only on clean database first initialization)
 DEFAULT_ADMIN_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")

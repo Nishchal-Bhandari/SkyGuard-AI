@@ -65,6 +65,18 @@ class RootCauseClassifier:
             "description": "Corrupt telemetry code or missing packet payload received over communications link.",
             "recommended_action": "Check RS-485 / SDI-12 cabling and cellular modem signal integrity."
         },
+        "MISSING_DATA": {
+            "severity": "HIGH",
+            "category": "DATA_AVAILABILITY",
+            "description": "Expected observation is absent, stale, or incomplete.",
+            "recommended_action": "Check station connectivity, buffer replay status, and logger timestamps."
+        },
+        "SENSOR_NOISE_DEGRADATION": {
+            "severity": "MEDIUM",
+            "category": "MAINTENANCE_REQUIRED",
+            "description": "Excessive short-term variance indicates degrading sensor or acquisition noise.",
+            "recommended_action": "Inspect shielding, grounding, connectors, and sensor element noise."
+        },
         "NOMINAL": {
             "severity": "INFO",
             "category": "NORMAL_OPERATION",
@@ -93,6 +105,9 @@ class RootCauseClassifier:
         temp = float(observation.get("temp", observation.get("temperature", 25.0)))
         hum = float(observation.get("hum", observation.get("humidity", 70.0)))
         pres = float(observation.get("pres", observation.get("pressure", 1013.25)))
+
+        if observation.get("missing") or observation.get("stale"):
+            return cls._build_result("MISSING_DATA", 0.95, "Observation is marked missing or stale by the ingestion freshness gate.")
 
         # 1. Check for Hardware Framing & Communication Corruption
         if temp < -70.0 or temp > 65.0 or pres < 500.0 or pres > 1100.0 or hum < 0.0 or hum > 105.0:
@@ -152,6 +167,7 @@ class RootCauseClassifier:
             prev_t = float(last_observation.get("temp", last_observation.get("temperature", temp)))
             if abs(temp - prev_t) >= 6.0:
                 return cls._build_result("THERMAL_SPIKE", 0.90, f"Sudden delta of {abs(temp - prev_t):.1f}°C exceeds atmospheric maximum rate of change.")
+
 
         if ml_is_anomaly:
             return cls._build_result("CALIBRATION_DRIFT", round(min(0.95, ml_score), 2), f"Statistical isolation anomaly detected by microclimate model (score: {ml_score:.3f}).")

@@ -51,6 +51,11 @@ export const FleetMap = () => {
 
     const map = mapInstanceRef.current;
 
+    // Pan to target station smoothly if it changed
+    if (targetStation && targetStation.lat && targetStation.lon) {
+      map.panTo([targetStation.lat, targetStation.lon], { animate: true, duration: 0.8 });
+    }
+
     // Clear old layers
     Object.values(markersRef.current).forEach(m => map.removeLayer(m));
     linesRef.current.forEach(l => map.removeLayer(l));
@@ -66,8 +71,8 @@ export const FleetMap = () => {
       const isTarget = st.id === activeStationId;
       let pinClass = "normal";
       if (st.status === "SUSPECT") pinClass = "suspect";
-      else if (st.status === "CRITICAL") pinClass = "critical";
-      else if (st.status === "EXTREME") pinClass = "extreme";
+      else if (st.status === "CRITICAL" || st.status === "LOCALIZED_ANOMALY" || st.status === "REJECTED") pinClass = "critical";
+      else if (st.status === "EXTREME" || st.status === "REGIONAL_EVENT") pinClass = "extreme";
 
       const customIcon = L.divIcon({
         className: 'custom-station-pin',
@@ -93,7 +98,7 @@ export const FleetMap = () => {
           ${st.id} - ${st.name} ${isTarget ? '<span style="color: #ffaa00;">[SELECTED TARGET]</span>' : ''}
         </div>
         <div>Region: <strong style="color: #94a3b8;">${st.region || 'Local'}</strong></div>
-        <div>Status: <span style="color: ${st.status === 'NORMAL' ? '#00ff66' : st.status === 'SUSPECT' ? '#ffaa00' : '#ff0055'}; font-weight: bold;">${st.status}</span></div>
+        <div>Status: <span style="color: ${st.status === 'NORMAL' ? '#00ff66' : (st.status === 'SUSPECT' ? '#ffaa00' : (st.status === 'REGIONAL_EVENT' || st.status === 'EXTREME' ? '#a855f7' : '#ff0055'))}; font-weight: bold;">${st.status}</span></div>
         <div>Temp: ${st.sensors.temperature.value}°C | Hum: ${st.sensors.humidity.value}%</div>
         <div>Model: <span style="color: #a855f7;">${st.ml_model?.model_id || 'Rules Only'}</span></div>
         <div>Spatial Assessment: <span style="color: #00f0ff;">${st.final_assessment?.classification || 'NORMAL'}</span></div>
@@ -140,7 +145,7 @@ export const FleetMap = () => {
 
         const dist = haversineDistance(targetStation.lat, targetStation.lon, other.lat, other.lon);
         if (dist <= neighborRadiusKm) {
-          const isPeerSuspect = other.status === "SUSPECT" || other.status === "CRITICAL";
+          const isPeerSuspect = other.status === "SUSPECT" || other.status === "CRITICAL" || other.status === "LOCALIZED_ANOMALY" || other.status === "REJECTED";
           const vectorLine = L.polyline(
             [[targetStation.lat, targetStation.lon], [other.lat, other.lon]],
             {
@@ -159,6 +164,13 @@ export const FleetMap = () => {
           linesRef.current.push(vectorLine);
         }
       });
+
+      // Fit bounds to the circle if we just changed target or radius
+      const currentConfigKey = `${targetStation.id}-${neighborRadiusKm}`;
+      if (mapContainerRef.current && mapContainerRef.current.dataset.lastConfig !== currentConfigKey) {
+        map.fitBounds(circleRef.current.getBounds(), { padding: [50, 50], maxZoom: 10, animate: true });
+        mapContainerRef.current.dataset.lastConfig = currentConfigKey;
+      }
     }
 
     const timer = setTimeout(() => {

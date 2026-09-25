@@ -180,7 +180,7 @@ export const CommandCenter = () => {
                               {shi}%
                             </span>
                             <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
-                              ({st.sensor_health?.predictive_maintenance?.remaining_useful_life_days ?? 180}d RUL)
+                              ({st.sensor_health?.predictive_maintenance?.degradation_projection_days ?? 180}d projection)
                             </span>
                           </div>
                         </td>

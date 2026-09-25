@@ -11,7 +11,7 @@ from backend.app.storage.database import (
 )
 from backend.app.services.training_service import training_service
 from backend.app.services.model_storage import model_storage_service
-from backend.app.api.v1.auth import get_current_user, require_admin, get_optional_user
+from backend.app.api.v1.auth import get_current_user, require_admin, require_station_access
 
 router = APIRouter(tags=["Station-Adaptive MLOps Governance"])
 
@@ -71,10 +71,11 @@ def get_training_job_status(
     station_id: str,
     job_id: int,
     response: Response,
-    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Returns the current real-time status and stages of the training job."""
     clean_id = station_id.strip().upper()
+    require_station_access(clean_id, current_user)
     job = get_training_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Training job not found")
@@ -118,12 +119,13 @@ def get_training_job_status(
 @router.get("/stations/{station_id}/training-jobs")
 def get_station_training_jobs(
     station_id: str,
-    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Returns audit history of training jobs executed for station_id.
     """
     clean_id = station_id.strip().upper()
+    require_station_access(clean_id, current_user)
     jobs = list_training_jobs(clean_id)
     return {
         "success": True,
@@ -135,12 +137,13 @@ def get_station_training_jobs(
 @router.get("/stations/{station_id}/models")
 def get_station_models(
     station_id: str,
-    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Returns all registered models (active and archived) for station_id from model_registry.
     """
     clean_id = station_id.strip().upper()
+    require_station_access(clean_id, current_user)
     models = list_station_models(clean_id)
     return {
         "success": True,
@@ -152,13 +155,14 @@ def get_station_models(
 @router.get("/stations/{station_id}/models/active")
 def get_station_active_model(
     station_id: str,
-    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Returns the currently ACTIVE model card and metadata for station_id.
     If no model has been trained, returns has_active_model: false.
     """
     clean_id = station_id.strip().upper()
+    require_station_access(clean_id, current_user)
     active_rec = get_active_model_record(clean_id)
 
     if not active_rec:
@@ -222,6 +226,7 @@ def score_realtime_telemetry(
     Returns MODEL_NOT_TRAINED if no active model is found for this station.
     """
     clean_id = station_id.strip().upper()
+    require_station_access(clean_id, current_user)
     obs = payload.get("observation", payload)
     last_obs = payload.get("last_observation")
     score_res = training_service.score_observation(clean_id, obs, last_obs)

@@ -103,7 +103,7 @@ export const FaultLab = () => {
 
   const handleReset = () => {
     tacticalAudio.playClick();
-    clearFaults(selectedStation);
+    clearFaults();
     setLastInjected(null);
     tacticalAudio.playSuccess();
   };
