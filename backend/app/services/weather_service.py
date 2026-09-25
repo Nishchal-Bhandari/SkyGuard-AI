@@ -229,12 +229,21 @@ class WeatherService:
             elev = float(station.get("elevation", 0) or 0)
             readiness = station_readiness(st_id)
             
+            def safe_float_log(val, default):
+                if isinstance(val, dict):
+                    logger.error(f"Unexpected dict value for float parsing: {val}")
+                    return default
+                try:
+                    return float(val) if val is not None else default
+                except (ValueError, TypeError):
+                    return default
+
             # Base Open-Meteo readings (fallback to nominal if not yet populated)
-            temp: Optional[float] = float(current.get("temperature_2m", 26.5))
-            hum: Optional[float] = float(current.get("relative_humidity_2m", 78.0))
-            pres: Optional[float] = float(current.get("surface_pressure", 1010.0))
-            wind: Optional[float] = float(current.get("wind_speed_10m", 10.0))
-            rain: Optional[float] = float(current.get("precipitation", 0.0))
+            temp: Optional[float] = safe_float_log(current.get("temperature_2m"), 26.5)
+            hum: Optional[float] = safe_float_log(current.get("relative_humidity_2m"), 78.0)
+            pres: Optional[float] = safe_float_log(current.get("surface_pressure"), 1010.0)
+            wind: Optional[float] = safe_float_log(current.get("wind_speed_10m"), 10.0)
+            rain: Optional[float] = safe_float_log(current.get("precipitation"), 0.0)
             
             # Active Faults Injection Simulation
             fault = active_faults.get(st_id)

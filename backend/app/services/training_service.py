@@ -188,7 +188,7 @@ class StationAdaptiveTrainingService:
                         parameter=param,
                         coefficients=res["coefficients"],
                         robust_sigma=res["robust_sigma"],
-                        observation_count=res["observation_count"],
+                        observation_count=climatology_results.get("observation_count", 0),
                         model_version=target_version
                     )
 
