@@ -83,7 +83,9 @@ class RootCauseClassifier:
             "description": "All atmospheric parameters and hardware health indicators operating within nominal limits.",
             "recommended_action": "No action required."
         }
-    }    @classmethod
+    }
+    
+    @classmethod
     def diagnose(
         cls,
         observation: Dict[str, Any],

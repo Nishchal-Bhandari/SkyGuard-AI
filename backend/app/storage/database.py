@@ -1028,7 +1028,12 @@ def list_assessments(station_id: str, limit: int = 100) -> List[Dict[str, Any]]:
             ORDER BY source_timestamp DESC, id DESC
             LIMIT ?
         """, (clean_id, safe_limit))
-        return [_decode_assessment_row(row) for row in cur.fetchall()]
+        results = []
+        for row in cur.fetchall():
+            dec = _decode_assessment_row(row)
+            if dec is not None:
+                results.append(dec)
+        return results
 
 
 def get_station_telemetry_stats(station_id: str) -> Dict[str, Any]:
@@ -1561,7 +1566,7 @@ def get_incident(incident_id: str) -> Optional[Dict[str, Any]]:
         return _format_incident_row(dict(row))
 
 
-def create_or_update_incident(incident_data: Dict[str, Any]) -> Dict[str, Any]:
+def create_or_update_incident(incident_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     station_id = str(incident_data["station_id"]).strip().upper()
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     
@@ -1833,7 +1838,7 @@ def get_station_maintenance_tasks(station_id: str) -> List[Dict[str, Any]]:
                     ON CONFLICT (station_id, task_key) DO NOTHING
                 """, seed_rows)
             else:
-                seed_rows = [
+                seed_rows_list: List[tuple] = [
                     (clean_id, t["task_key"], t["title"], t["description"], 0, None, None, now_iso)
                     for t in DEFAULT_MAINTENANCE_TASKS
                 ]
@@ -1842,7 +1847,7 @@ def get_station_maintenance_tasks(station_id: str) -> List[Dict[str, Any]]:
                         (station_id, task_key, title, description, done, completed_by, completed_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(station_id, task_key) DO NOTHING
-                """, seed_rows)
+                """, seed_rows_list)
             cur.execute("SELECT * FROM maintenance_tasks WHERE station_id = ? ORDER BY id ASC", (clean_id,))
             rows = cur.fetchall()
         return [_format_maintenance_task_row(dict(r)) for r in rows]
@@ -2060,5 +2065,4 @@ def record_drift_metrics(station_id: str, anomaly_rate: float, score_mean: float
                 INSERT INTO drift_metrics (station_id, anomaly_rate, score_mean, score_std, recorded_at)
                 VALUES (?, ?, ?, ?, ?)
             """, (station_id, anomaly_rate, score_mean, score_std, now_iso))
- 
- 
+

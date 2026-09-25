@@ -313,8 +313,8 @@ def update_station(station_id: str, payload: UpdateStationRequest, admin_user: D
                 detail=f"Weather station '{target_id}' not found."
             )
         
-        updates = []
-        params = []
+        updates: List[str] = []
+        params: List[Any] = []
         
         if payload.station_name is not None:
             updates.append("station_name = ?")

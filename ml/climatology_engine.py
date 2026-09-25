@@ -165,18 +165,18 @@ class ClimatologyEngine:
         if not observations:
              return {}
              
-        hours = []
-        days = []
-        temps = []
-        hums = []
-        press = []
+        hours: List[float] = []
+        days: List[float] = []
+        temps: List[float] = []
+        hums: List[float] = []
+        press: List[float] = []
         
         for obs in observations:
              # Try to extract timestamp to day of year, fallback to 0
              ts = str(obs.get("timestamp", ""))
              try:
                  dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                 day_of_year = dt.timetuple().tm_yday
+                 day_of_year = float(dt.timetuple().tm_yday)
              except Exception:
                  day_of_year = 1.0
              

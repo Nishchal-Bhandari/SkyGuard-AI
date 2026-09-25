@@ -278,7 +278,7 @@ class StationAdaptiveMLPipeline:
 
         return X, stats
 
-    def train_station_model(self, station_id: str, raw_rows: list, profile: dict = None, version="v1.0"):
+    def train_station_model(self, station_id: str, raw_rows: list, profile: Optional[Dict[str, Any]] = None, version="v1.0"):
         valid_rows, scrubbed = self.preprocess_dataset(raw_rows)
         if len(valid_rows) < 20:
             raise ValueError(f"Insufficient historical data for {station_id}: {len(valid_rows)} valid rows (min 20 required).")
@@ -341,7 +341,7 @@ class StationAdaptiveMLPipeline:
         iforest = IsolationForest.from_dict(data["model_weights"])
         return model_card, iforest
 
-    def score_realtime(self, station_id: str, observation: dict, last_observation: dict = None, version="v1.0"):
+    def score_realtime(self, station_id: str, observation: dict, last_observation: Optional[Dict[str, Any]] = None, version="v1.0"):
         model_card, iforest = self.load_station_model(station_id, version)
         if not iforest:
             return {

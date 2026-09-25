@@ -93,14 +93,14 @@ class TreeSHAPEngine:
             })
 
         # Sort features by attribution percentage descending
-        attributions.sort(key=lambda item: item["percentage"], reverse=True)
+        attributions.sort(key=lambda item: float(str(item["percentage"])), reverse=True)
 
-        top_drivers = [a for a in attributions if a["percentage"] >= 15.0]
+        top_drivers = [a for a in attributions if float(str(a["percentage"])) >= 15.0]
         primary_driver = attributions[0] if attributions else None
 
         # Build natural language explanation
         if anomaly_score >= base_threshold and top_drivers:
-            top_names = [f"{d['feature'].replace('_norm', '').replace('_', ' ').title()} ({d['percentage']}%)" for d in top_drivers[:3]]
+            top_names = [f"{str(d['feature']).replace('_norm', '').replace('_', ' ').title()} ({d['percentage']}%)" for d in top_drivers[:3]]
             explanation_text = (
                 f"Observation anomaly score {anomaly_score} breached threshold {base_threshold}. "
                 f"Primary root drivers: {', '.join(top_names)}."

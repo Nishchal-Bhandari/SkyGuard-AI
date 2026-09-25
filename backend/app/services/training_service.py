@@ -105,7 +105,7 @@ class StationAdaptiveTrainingService:
         clean_id = station_id.strip().upper()
         start_time_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
         
-        completed_stages = []
+        completed_stages: List[str] = []
         try:
             # -----------------------------------------------------------------
             # 1. Data Ingested
@@ -232,7 +232,7 @@ class StationAdaptiveTrainingService:
             time.sleep(1.2)
 
             # Shadow Validation & Promotion Gate
-            new_scores = [iforest.score(x) for x in X]
+            new_scores = [iforest.score_sample(x) for x in X]
             new_anomalies = sum(1 for s in new_scores if s >= iforest.threshold)
             new_anomaly_rate = new_anomalies / len(X) if len(X) > 0 else 0
             
@@ -436,7 +436,7 @@ class StationAdaptiveTrainingService:
                 dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
                 day_of_year = dt.timetuple().tm_yday
             except Exception:
-                day_of_year = 1.0
+                day_of_year = 1
                 
             def get_z(param, val):
                 if param in c_res:
@@ -485,13 +485,26 @@ class StationAdaptiveTrainingService:
                 cos_hour
             ]
 
+        import logging
+        logger = logging.getLogger(__name__)
         try:
             score = iforest.score_sample(x_vec)
         except ValueError as e:
             logger.warning(f"Model dimensional error for {clean_id}: {e}. Attempting rollback.")
-            rollback_res = rollback_model_version(clean_id)
+            # find previous version
+            from backend.app.storage.database import list_station_models
+            models = list_station_models(clean_id)
+            archived = [m for m in models if m.get("status") == "ARCHIVED"]
+            target_version = archived[0]["model_version"] if archived else None
+            rollback_res = None
+            if target_version:
+                try:
+                    rollback_res = rollback_model_version(clean_id, target_version)
+                except Exception:
+                    pass
+            
             if rollback_res:
-                logger.info(f"Successfully rolled back model for {clean_id} to previous version.")
+                logger.info(f"Successfully rolled back model for {clean_id} to previous version {target_version}.")
                 return {
                     "station_id": clean_id,
                     "has_model": False,
@@ -499,11 +512,13 @@ class StationAdaptiveTrainingService:
                     "anomaly_score": 0.0,
                     "threshold": 0.0,
                     "is_anomaly": False,
-                    "reason": "Model dimensionality mismatch. Rollback performed."
+                    "reason": f"Model dimensionality mismatch. Rollback to {target_version} performed."
                 }
             else:
                 logger.error(f"No rollback available for {clean_id}. Triggering re-train.")
-                create_training_job(clean_id)
+                import datetime
+                fallback_version = f"v_fallback_{int(datetime.datetime.now().timestamp())}"
+                create_training_job(clean_id, fallback_version)
                 return {
                     "station_id": clean_id,
                     "has_model": False,

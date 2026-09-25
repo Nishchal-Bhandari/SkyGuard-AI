@@ -230,11 +230,11 @@ class WeatherService:
             readiness = station_readiness(st_id)
             
             # Base Open-Meteo readings (fallback to nominal if not yet populated)
-            temp = float(current.get("temperature_2m", 26.5))
-            hum = float(current.get("relative_humidity_2m", 78.0))
-            pres = float(current.get("surface_pressure", 1010.0))
-            wind = float(current.get("wind_speed_10m", 10.0))
-            rain = float(current.get("precipitation", 0.0))
+            temp: Optional[float] = float(current.get("temperature_2m", 26.5))
+            hum: Optional[float] = float(current.get("relative_humidity_2m", 78.0))
+            pres: Optional[float] = float(current.get("surface_pressure", 1010.0))
+            wind: Optional[float] = float(current.get("wind_speed_10m", 10.0))
+            rain: Optional[float] = float(current.get("precipitation", 0.0))
             
             # Active Faults Injection Simulation
             fault = active_faults.get(st_id)
@@ -247,9 +247,9 @@ class WeatherService:
                 f_type = fault.get("fault_type")
                 f_offset = float(fault.get("offset_val", 0.4) or 0.4)
                 if f_type == "SPIKE":
-                    temp += 8.5
+                    if temp is not None: temp += 8.5
                 elif f_type == "DRIFT":
-                    temp += f_offset
+                    if temp is not None: temp += f_offset
                     drift_rate = f_offset / 3.0
                 elif f_type == "FLATLINE":
                     temp = 24.0
@@ -260,10 +260,10 @@ class WeatherService:
                     battery = 10.8
                     signal = -98
                 elif f_type == "STORM":
-                    rain += 25.0
-                    wind += 30.0
+                    if rain is not None: rain += 25.0
+                    if wind is not None: wind += 30.0
                     hum = 98.0
-                    pres -= 8.0
+                    if pres is not None: pres -= 8.0
                 elif f_type == "RH_SUPERSAT":
                     hum = 105.0 + f_offset
                 elif f_type == "SENTINEL":
@@ -275,30 +275,35 @@ class WeatherService:
                     hum = None
                     pres = None
                 elif f_type == "PRESSURE_OFFSET":
-                    pres += 15.0 + f_offset
+                    if pres is not None:
+                        pres += 15.0 + f_offset
                 elif f_type == "NOISE_BURST":
-                    temp += (random.random() - 0.5) * 20.0
-                    hum += (random.random() - 0.5) * 40.0
-                    pres += (random.random() - 0.5) * 30.0
+                    if temp is not None: temp += (random.random() - 0.5) * 20.0
+                    if hum is not None: hum += (random.random() - 0.5) * 40.0
+                    if pres is not None: pres += (random.random() - 0.5) * 30.0
                 elif f_type == "COMMS_DROPOUT":
                     temp = None
                     hum = None
                     pres = None
                     signal = -110
                 elif f_type == "SEA_BREEZE":
-                    temp -= 6.0
-                    hum += 15.0
-                    wind += 12.0
+                    if temp is not None: temp -= 6.0
+                    if hum is not None: hum += 15.0
+                    if wind is not None: wind += 12.0
                     
             # L1 Sentinel / Missing Data Handling
             is_missing = temp is None or hum is None or pres is None
-            is_sentinel = not is_missing and (temp <= -900 or hum >= 65000 or pres <= -900)
+            is_sentinel = not is_missing and temp is not None and hum is not None and pres is not None and (temp <= -900 or hum >= 65000 or pres <= -900)
             
             if is_missing or is_sentinel:
                 # Force dummy safe values for pipeline continuation, flag as suspect
                 temp = temp if (temp is not None and not is_sentinel) else 25.0
                 hum = hum if (hum is not None and not is_sentinel) else 65.0
                 pres = pres if (pres is not None and not is_sentinel) else 1013.25
+                
+            assert temp is not None
+            assert hum is not None
+            assert pres is not None
 
             # Level 1: Thermodynamic & Physical Bounds Verification
             thermo_valid, thermo_violations = thermo_engine.validate_thermodynamic_bounds(temp, pres, hum, elev)
@@ -324,7 +329,9 @@ class WeatherService:
                 {"temp": temp, "hum": hum, "pres": pres},
                 previous_observation if previous_state else None
             )
-            multivariate_evidence = self._multivariate_evidence(temp, hum, pres, rain, wind)
+            rain_val = rain if rain is not None else 0.0
+            wind_val = wind if wind is not None else 10.0
+            multivariate_evidence = self._multivariate_evidence(temp, hum, pres, rain_val, wind_val)
 
             # WMO Flag defaults: 0 (Good), 1 (Suspect), 2 (Erroneous), 3 (Imputed)
             wmo_t_flag = 0
@@ -447,8 +454,8 @@ class WeatherService:
                     "temperature": {"value": round(float(temp), 1), "unit": "°C", "wmo_flag": wmo_t_flag, "status": "FLAG_GOOD" if wmo_t_flag == 0 else ("FLAG_SUSPECT" if wmo_t_flag == 1 else "FLAG_ERRONEOUS")},
                     "humidity": {"value": round(float(hum), 1), "unit": "%", "wmo_flag": wmo_h_flag, "status": "FLAG_GOOD" if wmo_h_flag == 0 else ("FLAG_SUSPECT" if wmo_h_flag == 1 else "FLAG_ERRONEOUS")},
                     "pressure": {"value": round(float(pres), 1), "unit": "hPa", "wmo_flag": wmo_p_flag, "status": "FLAG_GOOD" if wmo_p_flag == 0 else ("FLAG_SUSPECT" if wmo_p_flag == 1 else "FLAG_ERRONEOUS")},
-                    "wind_speed": {"value": round(float(wind), 1), "unit": "km/h", "wmo_flag": 0},
-                    "rainfall": {"value": round(float(rain), 1), "unit": "mm", "wmo_flag": 0},
+                    "wind_speed": {"value": round(float(wind_val), 1), "unit": "km/h", "wmo_flag": 0},
+                    "rainfall": {"value": round(float(rain_val), 1), "unit": "mm", "wmo_flag": 0},
                 },
                 "derived_thermodynamics": derived_thermo,
                 "thermodynamic_violations": thermo_violations,
@@ -675,7 +682,7 @@ class WeatherService:
                     anomalous_params.append("pressure")
 
             from backend.app.storage.database import get_station_climatology
-            climatology_results = get_station_climatology(st_id)
+            climatology_results = get_station_climatology(st_id, "latest")
 
             imputed_data = imputation_engine.impute_observation(
                 target_station=state,
@@ -757,10 +764,11 @@ class WeatherService:
             )
             state["final_assessment"]["anomaly_score"] = ml_res.get("anomaly_score") if ml_res else None
             try:
+                ts_val = observation.get("timestamp") if isinstance(observation, dict) else None
                 persist_assessment(
                     st_id,
                     state["final_assessment"],
-                    source_timestamp=observation.get("timestamp") if isinstance(observation, dict) else None
+                    source_timestamp=str(ts_val) if ts_val is not None else None
                 )
             except Exception as assessment_error:
                 logger.warning(f"[ASSESSMENT PERSISTENCE] {st_id}: {assessment_error}")
@@ -773,16 +781,28 @@ class WeatherService:
                     reasons = [root_cause_diag.get("root_cause", "ANOMALY_DETECTED")]
                     if ml_res and ml_res.get("is_anomaly"):
                         score_val = ml_res.get("anomaly_score")
-                        score_str = f"{round(float(score_val), 3)}" if score_val is not None else "DETECTED"
+                        if isinstance(score_val, (int, float)):
+                            score_str = f"{round(float(score_val), 3)}"
+                        else:
+                            score_str = "DETECTED"
                         reasons.append(f"ML_SCORE_{score_str}")
 
                     closest_peer = nearby_stations[0] if nearby_stations else None
                     peer_st_id = closest_peer.get("station_id") if closest_peer else None
                     
                     qc_conf_local = all_qc_configs.get(st_id)
+                    def safe_float(val):
+                        try:
+                            return float(str(val))
+                        except (ValueError, TypeError):
+                            return None
+
+                    min_t = safe_float(qc_conf_local.get("temperature_normal_min")) if qc_conf_local else None
+                    max_t = safe_float(qc_conf_local.get("temperature_normal_max")) if qc_conf_local else None
+
                     sensor_qc_ev = {
-                        "station_normal_min": round(float(qc_conf_local.get("temperature_normal_min")), 2) if qc_conf_local and qc_conf_local.get("temperature_normal_min") is not None else None,
-                        "station_normal_max": round(float(qc_conf_local.get("temperature_normal_max")), 2) if qc_conf_local and qc_conf_local.get("temperature_normal_max") is not None else None,
+                        "station_normal_min": round(min_t, 2) if min_t is not None else None,
+                        "station_normal_max": round(max_t, 2) if max_t is not None else None,
                         "unit": "°C",
                         "observed_value": round(obs_temp, 2),
                         "qc_result": "OUTSIDE_NORMAL_ENVELOPE" if qc_envelope_breached else "PASS",
@@ -790,12 +810,13 @@ class WeatherService:
                         "fault_state": state.get("fault_details", {}).get("fault_type", "NONE_DETECTED") if state.get("fault_details") else "NONE_DETECTED"
                     }
 
+                    score_f = safe_float(ml_res.get("anomaly_score") if ml_res else None)
                     inc_payload = {
                         "station_id": st_id,
                         "station_name": state["station_name"],
                         "variable": "air_temperature",
                         "severity": "critical" if classification in ["CRITICAL", "LOCALIZED_ANOMALY"] else "high",
-                        "fault_risk": round(float(ml_res.get("anomaly_score", 0.85) or 0.85), 2),
+                        "fault_risk": round(score_f if score_f is not None else 0.85, 2),
                         "quality_state": classification,
                         "reason_codes": reasons,
                         "explanation": f"[{root_cause_diag.get('root_cause')}] {interpretation}",

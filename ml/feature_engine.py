@@ -61,7 +61,7 @@ class FeatureEngine:
                 dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
                 day_of_year = dt.timetuple().tm_yday
             except Exception:
-                day_of_year = 1.0
+                day_of_year = 1
             hour = float(obs.get("hour", 12))
             
             temp = self._extract_val(obs, ["temp", "temperature", "temperature_c"], 25.0)

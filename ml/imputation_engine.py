@@ -52,8 +52,8 @@ class ImputationEngine:
             day_of_year = dt.timetuple().tm_yday
             hour = dt.hour
         except Exception:
-            day_of_year = 1.0
-            hour = 12.0
+            day_of_year = 1
+            hour = 12
 
         imputed_record = {
             "temperature": {"value": raw_t, "unit": "°C", "wmo_flag": 0, "is_imputed": False},
@@ -82,7 +82,7 @@ class ImputationEngine:
 
         # 2. Impute Humidity if anomalous
         if "humidity" in anomalous_params or "hum" in anomalous_params:
-            current_t = imputed_record["temperature"]["value"]
+            current_t = float(str(imputed_record["temperature"]["value"]))
             imputed_h, method = cls._impute_humidity(raw_h, current_t, healthy_peers, station_history, climatology_results, hour, day_of_year)
             imputed_record["humidity"] = {
                 "value": round(imputed_h, 1),
@@ -106,15 +106,16 @@ class ImputationEngine:
             }
 
         # Ensure post-imputation thermodynamic consistency
-        final_t = imputed_record["temperature"]["value"]
-        final_h = imputed_record["humidity"]["value"]
-        final_p = imputed_record["pressure"]["value"]
+        final_t = float(str(imputed_record["temperature"]["value"]))
+        final_h = float(str(imputed_record["humidity"]["value"]))
+        final_p = float(str(imputed_record["pressure"]["value"]))
         
         # Verify no supersaturation in imputed stream
         if final_h > 100.0:
             imputed_record["humidity"]["value"] = 100.0
             imputed_record["humidity"]["is_imputed"] = True
             imputed_record["humidity"]["wmo_flag"] = 3
+            final_h = 100.0
 
         thermo_stats = thermo_engine.compute_all_thermodynamic_features(final_t, final_p, final_h, target_elev)
 

@@ -101,7 +101,7 @@ def get_training_job_status(
             completed.append("Model Activated")
         progress = 100.0
     else:
-        current_stage = job.get("current_stage")
+        current_stage = str(job.get("current_stage") or "Unknown")
         progress = round((len(completed) / 8.0) * 100.0, 1)
 
     return {
