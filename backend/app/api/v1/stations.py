@@ -395,3 +395,101 @@ def get_station_qc(station_id: str, current_user: Dict[str, Any] = Depends(get_c
         "has_config": True,
         "config": config
     }
+class UpdateQCConfigRequest(BaseModel):
+    temperature_normal_min: Optional[float] = None
+    temperature_normal_max: Optional[float] = None
+    humidity_normal_min: Optional[float] = None
+    humidity_normal_max: Optional[float] = None
+    pressure_normal_min: Optional[float] = None
+    pressure_normal_max: Optional[float] = None
+    wind_normal_max: Optional[float] = None
+    precipitation_normal_max: Optional[float] = None
+    justification: Optional[str] = "Routine tuning"
+
+@router.put("/admin/stations/{station_id}/qc", response_model=Dict[str, Any])
+def update_qc_config(station_id: str, payload: UpdateQCConfigRequest, admin_user: Dict[str, Any] = Depends(require_admin)):
+    """
+    Central Admin endpoint: Updates Quality Control (QC) envelopes for a station
+    and writes to the immutable config_audit ledger.
+    """
+    target_id = station_id.strip().upper()
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        
+        # Verify station exists
+        cursor.execute("SELECT id FROM stations WHERE station_id = ?", (target_id,))
+        if not cursor.fetchone():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Weather station '{target_id}' not found."
+            )
+            
+        # Check if qc config exists
+        cursor.execute("SELECT * FROM station_qc_config WHERE station_id = ?", (target_id,))
+        existing_qc = cursor.fetchone()
+        
+        if existing_qc:
+            cursor.execute("""
+                UPDATE station_qc_config SET
+                    temperature_normal_min = coalesce(?, temperature_normal_min),
+                    temperature_normal_max = coalesce(?, temperature_normal_max),
+                    humidity_normal_min = coalesce(?, humidity_normal_min),
+                    humidity_normal_max = coalesce(?, humidity_normal_max),
+                    pressure_normal_min = coalesce(?, pressure_normal_min),
+                    pressure_normal_max = coalesce(?, pressure_normal_max),
+                    wind_normal_max = coalesce(?, wind_normal_max),
+                    precipitation_normal_max = coalesce(?, precipitation_normal_max),
+                    updated_at = ?
+                WHERE station_id = ?
+            """, (
+                payload.temperature_normal_min, payload.temperature_normal_max,
+                payload.humidity_normal_min, payload.humidity_normal_max,
+                payload.pressure_normal_min, payload.pressure_normal_max,
+                payload.wind_normal_max, payload.precipitation_normal_max,
+                now_iso, target_id
+            ))
+        else:
+            cursor.execute("""
+                INSERT INTO station_qc_config (
+                    station_id, temperature_normal_min, temperature_normal_max,
+                    humidity_normal_min, humidity_normal_max, pressure_normal_min,
+                    pressure_normal_max, wind_normal_max, precipitation_normal_max,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                target_id, payload.temperature_normal_min, payload.temperature_normal_max,
+                payload.humidity_normal_min, payload.humidity_normal_max, payload.pressure_normal_min,
+                payload.pressure_normal_max, payload.wind_normal_max, payload.precipitation_normal_max,
+                now_iso
+            ))
+            
+        # Write to config_audit
+        import json
+        diff_payload = payload.model_dump(exclude_unset=True)
+        cursor.execute("""
+            INSERT INTO config_audit (
+                station_id, updated_by, previous_state_json, new_state_json, justification, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            target_id,
+            admin_user.get("sub", "admin"),
+            json.dumps(dict(existing_qc) if existing_qc else {}),
+            json.dumps(diff_payload),
+            payload.justification,
+            now_iso
+        ))
+        
+        # Trigger reload in weather service
+        from backend.app.services.weather_service import weather_service
+        try:
+            weather_service.reevaluate()
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "station_id": target_id,
+            "message": "QC limits updated and audited successfully."
+        }

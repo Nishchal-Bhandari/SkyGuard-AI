@@ -83,9 +83,7 @@ class RootCauseClassifier:
             "description": "All atmospheric parameters and hardware health indicators operating within nominal limits.",
             "recommended_action": "No action required."
         }
-    }
-
-    @classmethod
+    }    @classmethod
     def diagnose(
         cls,
         observation: Dict[str, Any],
@@ -96,7 +94,8 @@ class RootCauseClassifier:
         signal_dbm: float = -75.0,
         ml_is_anomaly: bool = False,
         ml_score: float = 0.0,
-        flatline_flag: bool = False
+        flatline_flag: bool = False,
+        temporal_evidence: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Executes multi-class root-cause inference.
@@ -111,16 +110,19 @@ class RootCauseClassifier:
 
         # 1. Check for Hardware Framing & Communication Corruption
         if temp < -70.0 or temp > 65.0 or pres < 500.0 or pres > 1100.0 or hum < 0.0 or hum > 105.0:
-            return cls._build_result("COMMUNICATION_CORRUPTION", 0.99, "Sensor values breached impossible physical domain boundaries.")
+            alts = [{"root_cause": "SENSOR_FLATLINE", "confidence": 0.4}]
+            return cls._build_result("COMMUNICATION_CORRUPTION", 0.99, "Sensor values breached impossible physical domain boundaries.", alts)
 
         # 2. Check for Power Sag / Brownout
         if battery_v < 11.2 or signal_dbm < -105.0:
             if ml_is_anomaly or (thermo_violations and len(thermo_violations) > 0):
-                return cls._build_result("POWER_SAG_BROWNOUT", 0.95, f"Telemetry instability correlated with low battery ({battery_v:.2f}V) or weak signal ({signal_dbm:.1f}dBm).")
+                alts = [{"root_cause": "SENSOR_NOISE_DEGRADATION", "confidence": 0.6}]
+                return cls._build_result("POWER_SAG_BROWNOUT", 0.95, f"Telemetry instability correlated with low battery ({battery_v:.2f}V) or weak signal ({signal_dbm:.1f}dBm).", alts)
 
         # 3. Check for Flatline / Frozen Values
         if flatline_flag:
-            return cls._build_result("SENSOR_FLATLINE", 0.98, "Zero temporal variance detected across consecutive observations.")
+            alts = [{"root_cause": "COMMUNICATION_CORRUPTION", "confidence": 0.5}]
+            return cls._build_result("SENSOR_FLATLINE", 0.98, "Zero temporal variance detected across consecutive observations.", alts)
 
         if last_observation:
             prev_t = float(last_observation.get("temp", last_observation.get("temperature", temp)))
@@ -128,16 +130,22 @@ class RootCauseClassifier:
             prev_p = float(last_observation.get("pres", last_observation.get("pressure", pres)))
             # If all 3 values are exactly identical down to float precision over multiple reads
             if abs(temp - prev_t) < 0.0001 and abs(hum - prev_h) < 0.0001 and abs(pres - prev_p) < 0.0001 and flatline_flag:
-                return cls._build_result("SENSOR_FLATLINE", 0.98, "Identical floating point telemetry across readings indicates ADC freeze.")
+                return cls._build_result("SENSOR_FLATLINE", 0.98, "Identical floating point telemetry across readings indicates ADC freeze.", [{"root_cause": "COMMUNICATION_CORRUPTION", "confidence": 0.5}])
 
         # 4. Check for Thermodynamic & Super-saturation Violations
         if thermo_violations and len(thermo_violations) > 0:
             primary_v = thermo_violations[0]
             v_type = primary_v.get("type", "")
             if v_type in ["SUPER_SATURATION_VIOLATION", "CLAUSIUS_CLAPEYRON_VIOLATION"]:
-                return cls._build_result("SUPER_SATURATION_VIOLATION", 0.96, primary_v.get("detail", "Thermodynamic saturation laws breached."))
+                alts = [{"root_cause": "CALIBRATION_DRIFT", "confidence": 0.6}, {"root_cause": "SENSOR_NOISE_DEGRADATION", "confidence": 0.3}]
+                return cls._build_result("SUPER_SATURATION_VIOLATION", 0.96, primary_v.get("detail", "Thermodynamic saturation laws breached."), alts)
 
-        # 5. Check for Regional Weather Front vs Localized Anomaly
+        # 5. Check for Noise Degradation (new class)
+        if temporal_evidence and temporal_evidence.get("noise"):
+            alts = [{"root_cause": "CALIBRATION_DRIFT", "confidence": 0.5}]
+            return cls._build_result("SENSOR_NOISE_DEGRADATION", 0.88, "High-frequency variance detected indicative of degraded shielding or ADC noise.", alts)
+
+        # 6. Check for Regional Weather Front vs Localized Anomaly
         if spatial_analysis:
             peer_count = spatial_analysis.get("eligible_peer_count", 0)
             spatially_consistent = spatial_analysis.get("spatially_consistent")
@@ -147,10 +155,12 @@ class RootCauseClassifier:
             if ml_is_anomaly or spatial_dev > 4.0:
                 # If peers also see the event OR target reading matches peer median
                 if (peer_count >= 2 and (spatially_consistent or peer_anomaly_ratio >= 0.40)):
+                    alts = [{"root_cause": "NOMINAL", "confidence": 0.4}]
                     return cls._build_result(
                         "REGIONAL_WEATHER_FRONT",
                         0.92,
-                        f"Atmospheric anomaly corroborated by {peer_count} spatial peers (peer anomaly ratio: {peer_anomaly_ratio * 100:.0f}%)."
+                        f"Atmospheric anomaly corroborated by {peer_count} spatial peers (peer anomaly ratio: {peer_anomaly_ratio * 100:.0f}%).",
+                        alts
                     )
                 # If peers disagree strongly
                 if peer_count >= 1 and spatially_consistent is False:
@@ -159,23 +169,27 @@ class RootCauseClassifier:
                         prev_t = float(last_observation.get("temp", last_observation.get("temperature", temp)))
                         delta_t = abs(temp - prev_t)
                         if delta_t >= 4.0:
-                            return cls._build_result("THERMAL_SPIKE", 0.94, f"Rapid unphysical jump of {delta_t:.1f}°C in single time step while peers remain steady.")
-                    return cls._build_result("CALIBRATION_DRIFT", 0.88, f"Systematic deviation ({spatial_dev:.1f}°C) from surrounding peer median.")
+                            alts = [{"root_cause": "CALIBRATION_DRIFT", "confidence": 0.4}, {"root_cause": "SENSOR_NOISE_DEGRADATION", "confidence": 0.3}]
+                            return cls._build_result("THERMAL_SPIKE", 0.94, f"Rapid unphysical jump of {delta_t:.1f}°C in single time step while peers remain steady.", alts)
+                    
+                    alts = [{"root_cause": "SENSOR_NOISE_DEGRADATION", "confidence": 0.5}, {"root_cause": "THERMAL_SPIKE", "confidence": 0.2}]
+                    return cls._build_result("CALIBRATION_DRIFT", 0.88, f"Systematic deviation ({spatial_dev:.1f}°C) from surrounding peer median.", alts)
 
-        # 6. Check single-station temporal spikes without peers
+        # 7. Check single-station temporal spikes without peers
         if last_observation:
             prev_t = float(last_observation.get("temp", last_observation.get("temperature", temp)))
             if abs(temp - prev_t) >= 6.0:
-                return cls._build_result("THERMAL_SPIKE", 0.90, f"Sudden delta of {abs(temp - prev_t):.1f}°C exceeds atmospheric maximum rate of change.")
-
+                alts = [{"root_cause": "CALIBRATION_DRIFT", "confidence": 0.4}]
+                return cls._build_result("THERMAL_SPIKE", 0.90, f"Sudden delta of {abs(temp - prev_t):.1f}°C exceeds atmospheric maximum rate of change.", alts)
 
         if ml_is_anomaly:
-            return cls._build_result("CALIBRATION_DRIFT", round(min(0.95, ml_score), 2), f"Statistical isolation anomaly detected by microclimate model (score: {ml_score:.3f}).")
+            alts = [{"root_cause": "SENSOR_NOISE_DEGRADATION", "confidence": 0.5}]
+            return cls._build_result("CALIBRATION_DRIFT", round(min(0.95, ml_score), 2), f"Statistical isolation anomaly detected by microclimate model (score: {ml_score:.3f}).", alts)
 
         return cls._build_result("NOMINAL", 0.99, "Nominal meteorological and sensor health status.")
 
     @classmethod
-    def _build_result(cls, root_cause_key: str, confidence: float, specific_reason: str) -> Dict[str, Any]:
+    def _build_result(cls, root_cause_key: str, confidence: float, specific_reason: str, alternatives: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         meta = cls.ROOT_CAUSE_METADATA.get(root_cause_key, cls.ROOT_CAUSE_METADATA["NOMINAL"])
         return {
             "root_cause": root_cause_key,
@@ -184,8 +198,8 @@ class RootCauseClassifier:
             "category": meta["category"],
             "description": meta["description"],
             "specific_reason": specific_reason,
-            "recommended_action": meta["recommended_action"]
+            "recommended_action": meta["recommended_action"],
+            "ranked_alternatives": alternatives or []
         }
-
 
 root_cause_classifier = RootCauseClassifier()

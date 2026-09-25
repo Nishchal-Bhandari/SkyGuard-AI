@@ -641,6 +641,29 @@ def init_db():
                 );
             """)
 
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS retraining_candidates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    station_id TEXT NOT NULL,
+                    model_version TEXT NOT NULL,
+                    shadow_score REAL,
+                    anomaly_rate REAL,
+                    is_promoted BOOLEAN DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+            """)
+            
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS drift_metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    station_id TEXT NOT NULL,
+                    anomaly_rate REAL,
+                    score_mean REAL,
+                    score_std REAL,
+                    recorded_at TEXT NOT NULL
+                );
+            """)
+
             cur.execute("CREATE INDEX IF NOT EXISTS idx_stations_station_id ON stations(station_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_stations_username ON stations(username);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_stations_status ON stations(status);")
@@ -1960,3 +1983,82 @@ def adjudicate_incident(incident_id: str, action: str, operator_name: str = "Ope
                 
     return get_incident(incident_id)
 
+# -----------------------------------------------------------------------------
+# Climatology Model (Harmonic Regression) Access
+# -----------------------------------------------------------------------------
+def save_station_climatology(station_id: str, parameter: str, coefficients: List[float], robust_sigma: float, observation_count: int, model_version: str) -> None:
+    """Persists a fitted harmonic climatology model for a specific parameter."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        if conn.is_postgres:
+            cur.execute("""
+                INSERT INTO station_climatology (station_id, parameter, coefficients, robust_sigma, observation_count, model_version)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (station_id, parameter, json.dumps(coefficients), robust_sigma, observation_count, model_version))
+        else:
+            cur.execute("""
+                INSERT INTO station_climatology (station_id, parameter, coefficients, robust_sigma, observation_count, model_version)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (station_id, parameter, json.dumps(coefficients), robust_sigma, observation_count, model_version))
+
+def get_station_climatology(station_id: str, model_version: str) -> Dict[str, Any]:
+    """Retrieves all parameter climatologies for a given model version."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        if conn.is_postgres:
+            cur.execute("""
+                SELECT parameter, coefficients, robust_sigma, observation_count
+                FROM station_climatology
+                WHERE station_id = %s AND model_version = %s
+            """, (station_id, model_version))
+        else:
+            cur.execute("""
+                SELECT parameter, coefficients, robust_sigma, observation_count
+                FROM station_climatology
+                WHERE station_id = ? AND model_version = ?
+            """, (station_id, model_version))
+            
+        rows = cur.fetchall()
+        result = {}
+        for r in rows:
+            result[r["parameter"]] = {
+                "coefficients": json.loads(r["coefficients"]),
+                "robust_sigma": float(r["robust_sigma"]) if r["robust_sigma"] is not None else 1.0,
+                "observation_count": r["observation_count"]
+            }
+        return result
+
+# -----------------------------------------------------------------------------
+# MLOps Monitoring
+# -----------------------------------------------------------------------------
+def register_retraining_candidate(station_id: str, model_version: str, shadow_score: float, anomaly_rate: float, is_promoted: bool) -> None:
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with get_db() as conn:
+        cur = conn.cursor()
+        if conn.is_postgres:
+            cur.execute("""
+                INSERT INTO retraining_candidates (station_id, model_version, shadow_score, anomaly_rate, is_promoted, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (station_id, model_version, shadow_score, anomaly_rate, is_promoted, now_iso))
+        else:
+            cur.execute("""
+                INSERT INTO retraining_candidates (station_id, model_version, shadow_score, anomaly_rate, is_promoted, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (station_id, model_version, shadow_score, anomaly_rate, is_promoted, now_iso))
+
+def record_drift_metrics(station_id: str, anomaly_rate: float, score_mean: float, score_std: float) -> None:
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with get_db() as conn:
+        cur = conn.cursor()
+        if conn.is_postgres:
+            cur.execute("""
+                INSERT INTO drift_metrics (station_id, anomaly_rate, score_mean, score_std, recorded_at)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (station_id, anomaly_rate, score_mean, score_std, now_iso))
+        else:
+            cur.execute("""
+                INSERT INTO drift_metrics (station_id, anomaly_rate, score_mean, score_std, recorded_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (station_id, anomaly_rate, score_mean, score_std, now_iso))
+ 
+ 

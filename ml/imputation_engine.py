@@ -27,7 +27,8 @@ class ImputationEngine:
         target_station: Dict[str, Any],
         nearby_peers: List[Dict[str, Any]],
         anomalous_params: Optional[List[str]] = None,
-        station_history: Optional[List[Dict[str, Any]]] = None
+        station_history: Optional[List[Dict[str, Any]]] = None,
+        climatology_results: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Executes real-time imputation for flagged anomalous parameters.
@@ -43,6 +44,16 @@ class ImputationEngine:
         raw_t = float(raw_sensors.get("temperature", {}).get("value", target_station.get("temp", 25.0)))
         raw_h = float(raw_sensors.get("humidity", {}).get("value", target_station.get("hum", 65.0)))
         raw_p = float(raw_sensors.get("pressure", {}).get("value", target_station.get("pres", 1013.25)))
+        
+        ts = str(target_station.get("timestamp", ""))
+        try:
+            import datetime
+            dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            day_of_year = dt.timetuple().tm_yday
+            hour = dt.hour
+        except Exception:
+            day_of_year = 1.0
+            hour = 12.0
 
         imputed_record = {
             "temperature": {"value": raw_t, "unit": "°C", "wmo_flag": 0, "is_imputed": False},
@@ -59,7 +70,7 @@ class ImputationEngine:
 
         # 1. Impute Temperature if anomalous
         if "temperature" in anomalous_params or "temp" in anomalous_params:
-            imputed_t, method = cls._impute_temperature(raw_t, target_elev, healthy_peers, station_history)
+            imputed_t, method = cls._impute_temperature(raw_t, target_elev, healthy_peers, station_history, climatology_results, hour, day_of_year)
             imputed_record["temperature"] = {
                 "value": round(imputed_t, 1),
                 "raw_value": round(raw_t, 1),
@@ -72,7 +83,7 @@ class ImputationEngine:
         # 2. Impute Humidity if anomalous
         if "humidity" in anomalous_params or "hum" in anomalous_params:
             current_t = imputed_record["temperature"]["value"]
-            imputed_h, method = cls._impute_humidity(raw_h, current_t, healthy_peers, station_history)
+            imputed_h, method = cls._impute_humidity(raw_h, current_t, healthy_peers, station_history, climatology_results, hour, day_of_year)
             imputed_record["humidity"] = {
                 "value": round(imputed_h, 1),
                 "raw_value": round(raw_h, 1),
@@ -84,7 +95,7 @@ class ImputationEngine:
 
         # 3. Impute Pressure if anomalous
         if "pressure" in anomalous_params or "pres" in anomalous_params:
-            imputed_p, method = cls._impute_pressure(raw_p, target_elev, healthy_peers, station_history)
+            imputed_p, method = cls._impute_pressure(raw_p, target_elev, healthy_peers, station_history, climatology_results, hour, day_of_year)
             imputed_record["pressure"] = {
                 "value": round(imputed_p, 1),
                 "raw_value": round(raw_p, 1),
@@ -117,7 +128,8 @@ class ImputationEngine:
 
     @classmethod
     def _impute_temperature(
-        cls, raw_t: float, target_elev: float, peers: List[Dict[str, Any]], history: Optional[List[Dict[str, Any]]]
+        cls, raw_t: float, target_elev: float, peers: List[Dict[str, Any]], history: Optional[List[Dict[str, Any]]],
+        climatology: Optional[Dict[str, Any]], hour: float, day_of_year: float
     ) -> Tuple[float, str]:
         if peers:
             # Spatial IDW with Lapse Rate Correction
@@ -141,6 +153,13 @@ class ImputationEngine:
             if sum_w > 0:
                 return (sum(adj_temps) / sum_w), "SPATIAL_IDW_LAPSE_RATE"
 
+        if climatology and "temperature" in climatology:
+            from ml.climatology_engine import climatology_engine
+            c = climatology["temperature"]
+            exp = climatology_engine.compute_expected(c["coefficients"], hour, day_of_year)
+            # We can optionally add temporal lag (last known residual), but for simplicity use climatology expected
+            return exp, "CLIMATOLOGY_EXPECTED"
+
         # Fallback to local station temporal rolling average
         if history and len(history) > 0:
             recent_temps = [float(h.get("temp", h.get("temperature", raw_t))) for h in history[-5:] if abs(float(h.get("temp", h.get("temperature", raw_t))) - raw_t) < 15.0]
@@ -153,7 +172,8 @@ class ImputationEngine:
 
     @classmethod
     def _impute_humidity(
-        cls, raw_h: float, target_t: float, peers: List[Dict[str, Any]], history: Optional[List[Dict[str, Any]]]
+        cls, raw_h: float, target_t: float, peers: List[Dict[str, Any]], history: Optional[List[Dict[str, Any]]],
+        climatology: Optional[Dict[str, Any]], hour: float, day_of_year: float
     ) -> Tuple[float, str]:
         if peers:
             weights = []
@@ -169,6 +189,12 @@ class ImputationEngine:
             if sum_w > 0:
                 return max(10.0, min(100.0, sum(hums) / sum_w)), "SPATIAL_IDW"
 
+        if climatology and "humidity" in climatology:
+            from ml.climatology_engine import climatology_engine
+            c = climatology["humidity"]
+            exp = climatology_engine.compute_expected(c["coefficients"], hour, day_of_year)
+            return max(10.0, min(100.0, exp)), "CLIMATOLOGY_EXPECTED"
+
         if history and len(history) > 0:
             recent_h = [float(h.get("hum", h.get("humidity", 65.0))) for h in history[-5:]]
             if recent_h:
@@ -178,7 +204,8 @@ class ImputationEngine:
 
     @classmethod
     def _impute_pressure(
-        cls, raw_p: float, target_elev: float, peers: List[Dict[str, Any]], history: Optional[List[Dict[str, Any]]]
+        cls, raw_p: float, target_elev: float, peers: List[Dict[str, Any]], history: Optional[List[Dict[str, Any]]],
+        climatology: Optional[Dict[str, Any]], hour: float, day_of_year: float
     ) -> Tuple[float, str]:
         if peers:
             weights = []
@@ -198,6 +225,12 @@ class ImputationEngine:
             sum_w = sum(weights)
             if sum_w > 0:
                 return (sum(pressures) / sum_w), "SPATIAL_HYPSOMETRIC_IDW"
+
+        if climatology and "pressure" in climatology:
+            from ml.climatology_engine import climatology_engine
+            c = climatology["pressure"]
+            exp = climatology_engine.compute_expected(c["coefficients"], hour, day_of_year)
+            return exp, "CLIMATOLOGY_EXPECTED"
 
         # Theoretical barometric formula based on altitude
         p_hyp = thermo_engine.expected_hypsometric_pressure(target_elev)

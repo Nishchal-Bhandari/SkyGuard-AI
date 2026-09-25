@@ -60,6 +60,7 @@ def create_access_token(payload: Dict[str, Any], expires_delta_minutes: Optional
     """
     Creates a secure, tamper-proof HMAC-SHA256 signed access token.
     """
+    import uuid
     expire_minutes = expires_delta_minutes if expires_delta_minutes is not None else ACCESS_TOKEN_EXPIRE_MINUTES
     now = int(time.time())
     exp = now + (expire_minutes * 60)
@@ -67,7 +68,8 @@ def create_access_token(payload: Dict[str, Any], expires_delta_minutes: Optional
     token_payload = {
         **payload,
         "iat": now,
-        "exp": exp
+        "exp": exp,
+        "jti": str(uuid.uuid4())
     }
     
     header = {"alg": "HS256", "typ": "JWT"}
@@ -88,6 +90,12 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
         return None
     try:
         encoded_header, encoded_payload, encoded_signature = token.split('.')
+        
+        # Explicitly reject alg:none bypassing
+        header = json.loads(_b64_decode(encoded_header).decode('utf-8'))
+        if header.get("alg", "").lower() == "none":
+            return None
+            
         signature_input = f"{encoded_header}.{encoded_payload}".encode('utf-8')
         expected_signature = hmac.new(SECRET_KEY.encode('utf-8'), signature_input, hashlib.sha256).digest()
         actual_signature = _b64_decode(encoded_signature)

@@ -45,10 +45,17 @@ MODEL_STORAGE_PATH = Path(os.getenv("MODEL_STORAGE_PATH", str(PROJECT_ROOT / "ml
 MODEL_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
 
 # Security Configuration
-SECRET_KEY = os.getenv("SKYGUARD_SECRET_KEY", "skyguard-sentinel-tactical-secret-key-2026-v2")
+_env_secret = os.getenv("SKYGUARD_SECRET_KEY")
+if not _env_secret:
+    import secrets
+    _env_secret = secrets.token_hex(32)
+    print("[Config] WARNING: SKYGUARD_SECRET_KEY not set. Using ephemeral random key. Tokens will invalidate on restart.")
+
+SECRET_KEY = _env_secret
 TOKEN_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 Hours
 DEMO_MODE = os.getenv("DEMO_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
 
 # Default Seed Configuration (Used only on clean database first initialization)
 DEFAULT_ADMIN_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")

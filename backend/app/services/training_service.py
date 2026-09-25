@@ -19,9 +19,11 @@ from backend.app.storage.database import (
     rollback_model_version,
     update_training_job_stage,
     calibrate_station_qc_matrix,
-    get_station_telemetry_stats
+    get_station_telemetry_stats,
+    save_station_climatology
 )
 from backend.app.services.model_storage import model_storage_service
+from ml.climatology_engine import climatology_engine
 
 # Import the core StationAdaptiveMLPipeline and IsolationForest from ml/
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -169,12 +171,26 @@ class StationAdaptiveTrainingService:
             time.sleep(0.3)
             
             # -----------------------------------------------------------------
-            # 3. Data Preprocessed
+            # 3. Data Preprocessed (And Climatology Fitted)
             # -----------------------------------------------------------------
             update_training_job_stage(job_id, "Data Preprocessed", completed_stages)
             time.sleep(1.2)
 
             valid_rows = sorted(valid_rows, key=lambda x: x.get("timestamp", ""))
+            
+            # Fit climatology
+            climatology_results = climatology_engine.train_station_climatology(valid_rows)
+            for param in ["temperature", "humidity", "pressure"]:
+                if param in climatology_results:
+                    res = climatology_results[param]
+                    save_station_climatology(
+                        station_id=clean_id,
+                        parameter=param,
+                        coefficients=res["coefficients"],
+                        robust_sigma=res["robust_sigma"],
+                        observation_count=res["observation_count"],
+                        model_version=target_version
+                    )
 
             completed_stages.append("Data Preprocessed")
             update_training_job_stage(job_id, "Data Preprocessed", completed_stages)
@@ -186,7 +202,10 @@ class StationAdaptiveTrainingService:
             update_training_job_stage(job_id, "Features Generated", completed_stages)
             time.sleep(1.2)
 
-            X, norm_stats = self.pipeline.engineer_features(valid_rows)
+            from ml.feature_engine import feature_engine
+            target_elev = station_profile.get("elevation", 0.0)
+            X, norm_stats = feature_engine.engineer_features_v2(valid_rows, climatology_results, target_elev)
+            self.pipeline.feature_names = feature_engine.feature_names
 
             completed_stages.append("Features Generated")
             update_training_job_stage(job_id, "Features Generated", completed_stages)
@@ -212,6 +231,24 @@ class StationAdaptiveTrainingService:
             update_training_job_stage(job_id, "Model Evaluation", completed_stages)
             time.sleep(1.2)
 
+            # Shadow Validation & Promotion Gate
+            new_scores = [iforest.score(x) for x in X]
+            new_anomalies = sum(1 for s in new_scores if s >= iforest.threshold)
+            new_anomaly_rate = new_anomalies / len(X) if len(X) > 0 else 0
+            
+            # Simple gate: reject if anomaly rate is absurdly high (e.g. > 15%)
+            is_promoted = new_anomaly_rate <= 0.15
+            shadow_score = sum(new_scores)/len(new_scores) if new_scores else 0.0
+
+            from backend.app.storage.database import register_retraining_candidate
+            try:
+                register_retraining_candidate(clean_id, target_version, shadow_score, new_anomaly_rate, is_promoted)
+            except Exception as e:
+                logging.getLogger("skyguard.training").warning(f"Failed to register candidate: {e}")
+
+            if not is_promoted:
+                raise ValueError(f"Shadow validation failed: Anomaly rate {new_anomaly_rate*100:.1f}% exceeds 15% threshold.")
+
             model_id = f"{clean_id}_IF_{target_version.replace('.', '_')}"
             sha_hash = hashlib.sha256(f"{clean_id}_{target_version}_{iforest.threshold}".encode()).hexdigest()
 
@@ -234,7 +271,7 @@ class StationAdaptiveTrainingService:
                     "valid_records": len(valid_rows),
                     "scrubbed_records": scrubbed,
                     "dynamic_threshold": iforest.threshold,
-                    "contamination_rate_pct": 5.0,
+                    "contamination_rate_pct": round(new_anomaly_rate * 100, 2),
                     "features": self.pipeline.feature_names
                 },
                 "normalization_stats": norm_stats,
@@ -387,19 +424,96 @@ class StationAdaptiveTrainingService:
         vpd_norm = (vpd - stats.get("vpd_mean", vpd)) / (stats.get("vpd_std", 1.0) or 1.0)
         dew_depr_norm = (dew_depr - stats.get("dew_mean", dew_depr)) / (stats.get("dew_std", 1.0) or 1.0)
 
-        # 3-Parameter + Thermodynamic vector (8-D)
-        x_vec = [
-            (temp - stats.get("t_mean", temp)) / t_std,
-            (hum - stats.get("h_mean", hum)) / h_std,
-            (pres - stats.get("p_mean", pres)) / p_std,
-            vpd_norm,
-            dew_depr_norm,
-            temp_diff,
-            sin_hour,
-            cos_hour
-        ]
+        if stats.get("feature_space_version") == 2:
+            from backend.app.storage.database import get_station_climatology
+            from ml.climatology_engine import climatology_engine
+            
+            c_res = get_station_climatology(clean_id, active_rec["model_version"])
+            
+            ts = str(observation.get("timestamp", ""))
+            try:
+                import datetime
+                dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                day_of_year = dt.timetuple().tm_yday
+            except Exception:
+                day_of_year = 1.0
+                
+            def get_z(param, val):
+                if param in c_res:
+                    c = c_res[param]
+                    exp = climatology_engine.compute_expected(c["coefficients"], hour, day_of_year)
+                    return (val - exp) / max(c["robust_sigma"], 1e-6)
+                return 0.0
+                
+            z_T = get_z("temperature", temp)
+            z_H = get_z("humidity", hum)
+            z_P = get_z("pressure", pres)
+            
+            z_dpd = (dew_depr - stats.get("dpd_mean", dew_depr)) / stats.get("dpd_std", 1.0)
+            
+            from ml.thermo_engine import thermo_engine
+            elev = float(observation.get("elevation", 0.0))
+            expected_p = thermo_engine.expected_hypsometric_pressure(elev)
+            p_elev_resid = pres - expected_p
+            p_elev_norm = (p_elev_resid - stats.get("p_elev_mean", p_elev_resid)) / stats.get("p_elev_std", 1.0)
+            
+            # Approximations for single-observation scoring where history isn't passed deeply
+            var3 = 0.0
+            
+            prev_t_z = get_z("temperature", prev_t) if last_observation else z_T
+            
+            x_vec = [
+                round(z_T, 3),
+                round(z_H, 3),
+                round(z_P, 3),
+                round(z_dpd, 3),
+                round(p_elev_norm, 3),
+                round(var3, 3),
+                round(prev_t_z, 3),
+                round(math.sin(2 * math.pi * hour / 24.0), 3)
+            ]
+        else:
+            # 3-Parameter + Thermodynamic vector (8-D) (v1)
+            x_vec = [
+                (temp - stats.get("t_mean", temp)) / t_std,
+                (hum - stats.get("h_mean", hum)) / h_std,
+                (pres - stats.get("p_mean", pres)) / p_std,
+                vpd_norm,
+                dew_depr_norm,
+                temp_diff,
+                sin_hour,
+                cos_hour
+            ]
 
-        score = iforest.score_sample(x_vec)
+        try:
+            score = iforest.score_sample(x_vec)
+        except ValueError as e:
+            logger.warning(f"Model dimensional error for {clean_id}: {e}. Attempting rollback.")
+            rollback_res = rollback_model_version(clean_id)
+            if rollback_res:
+                logger.info(f"Successfully rolled back model for {clean_id} to previous version.")
+                return {
+                    "station_id": clean_id,
+                    "has_model": False,
+                    "status": "MODEL_ROLLBACK_IN_PROGRESS",
+                    "anomaly_score": 0.0,
+                    "threshold": 0.0,
+                    "is_anomaly": False,
+                    "reason": "Model dimensionality mismatch. Rollback performed."
+                }
+            else:
+                logger.error(f"No rollback available for {clean_id}. Triggering re-train.")
+                create_training_job(clean_id)
+                return {
+                    "station_id": clean_id,
+                    "has_model": False,
+                    "status": "RETRAIN_TRIGGERED",
+                    "anomaly_score": 0.0,
+                    "threshold": 0.0,
+                    "is_anomaly": False,
+                    "reason": "Model dimensionality mismatch and no fallback available. Re-train job triggered."
+                }
+                
         threshold = active_rec["threshold"]
         is_anomaly = score >= threshold
 

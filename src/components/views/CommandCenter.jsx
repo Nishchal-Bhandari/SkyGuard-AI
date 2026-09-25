@@ -33,6 +33,16 @@ export const CommandCenter = () => {
     return 'var(--text-muted)';
   };
 
+  const [filterStatus, setFilterStatus] = React.useState('ALL');
+  const [filterRootCause, setFilterRootCause] = React.useState('ALL');
+
+  const filteredStations = safeStations.filter(st => {
+    const statusMatch = filterStatus === 'ALL' || st.status === filterStatus;
+    const rcSeverity = st.root_cause_diagnosis?.severity || 'INFO';
+    const rcMatch = filterRootCause === 'ALL' || rcSeverity === filterRootCause;
+    return statusMatch && rcMatch;
+  });
+
   return (
     <>
       {/* Fleet Command Operational Header */}
@@ -120,18 +130,32 @@ export const CommandCenter = () => {
       <div className="cyber-card" style={{ marginTop: '14px' }}>
         <div className="cyber-card-header">
           <div className="cyber-card-title"><i className="fa-solid fa-network-wired"></i> FLEET TELEMETRY, ROOT-CAUSE DIAGNOSIS & SENSOR HEALTH (SHI)</div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="cyber-btn btn-sm" onClick={() => setCurrentView('fleet-map')}>
-              <i className="fa-solid fa-map"></i> View Geospatial Radar
-            </button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>Status:</span>
+            <select className="cyber-input" style={{ padding: '4px 8px', width: 'auto', fontSize: '0.74rem' }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+              <option value="ALL">ALL</option>
+              <option value="NORMAL">NORMAL</option>
+              <option value="LOCALIZED_ANOMALY">ANOMALOUS</option>
+              <option value="SUSPECT">SUSPECT</option>
+              <option value="REGIONAL_EVENT">REGIONAL_EVENT</option>
+            </select>
+            <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginLeft: '10px' }}>Severity:</span>
+            <select className="cyber-input" style={{ padding: '4px 8px', width: 'auto', fontSize: '0.74rem' }} value={filterRootCause} onChange={e => setFilterRootCause(e.target.value)}>
+              <option value="ALL">ALL</option>
+              <option value="CRITICAL">CRITICAL</option>
+              <option value="HIGH">HIGH</option>
+              <option value="MEDIUM">MEDIUM</option>
+              <option value="ALERT">ALERT</option>
+              <option value="INFO">INFO</option>
+            </select>
           </div>
         </div>
         <div className="cyber-card-body" style={{ padding: 0 }}>
-          {stations.length === 0 ? (
+          {filteredStations.length === 0 ? (
             <div style={{ padding: '36px 20px', textAlign: 'center', background: 'rgba(5,8,17,0.7)', borderRadius: '4px' }}>
               <i className="fa-solid fa-tower-broadcast" style={{ fontSize: '2.2rem', color: 'var(--neon-cyan)', marginBottom: '12px', opacity: 0.8 }}></i>
               <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
-                NO WEATHER STATIONS CONFIGURED
+                NO STATIONS MATCH FILTER
               </div>
             </div>
           ) : (
@@ -151,7 +175,7 @@ export const CommandCenter = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {stations.map(st => {
+                  {filteredStations.map(st => {
                     const badge = st.status === 'NORMAL' ? 'badge-normal' : (st.status === 'REGIONAL_EVENT' ? 'badge-extreme' : (st.status === 'SUSPECT' ? 'badge-suspect' : 'badge-critical'));
                     const rootCause = st.root_cause_diagnosis?.root_cause || st.final_assessment?.root_cause || 'NOMINAL';
                     const shi = st.sensor_health?.overall_health_score ?? 100;

@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from backend.app.config import IS_POSTGRES
+from backend.app.config import IS_POSTGRES, ALLOWED_ORIGINS
 from backend.app.storage.database import init_db
 
 from backend.app.api.v1.auth import router as auth_router
@@ -49,7 +49,7 @@ app = FastAPI(
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

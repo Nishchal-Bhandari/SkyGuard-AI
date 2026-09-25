@@ -123,12 +123,32 @@ def require_station_access(station_id: str, current_user: Dict[str, Any]) -> Dic
 # Endpoints
 # ---------------------------------------------------------------------------
 
+import time
+from fastapi import Request
+
+_login_attempts: Dict[str, list] = {}
+
+def check_rate_limit(key: str, max_attempts: int = 5, window_seconds: int = 300):
+    now = time.time()
+    if key not in _login_attempts:
+        _login_attempts[key] = []
+    _login_attempts[key] = [t for t in _login_attempts[key] if now - t < window_seconds]
+    if len(_login_attempts[key]) >= max_attempts:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Please try again later."
+        )
+    _login_attempts[key].append(now)
+
 @router.post("/admin/login", response_model=LoginResponse)
-def login_admin(payload: AdminLoginRequest):
+def login_admin(payload: AdminLoginRequest, request: Request):
     """
     Authenticates a Central Administrator against the SQLite database.
     """
     clean_username = payload.username.strip().lower()
+    ip = request.client.host if request.client else "unknown"
+    check_rate_limit(f"admin_{clean_username}_{ip}")
+    
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     
     with get_db() as conn:
@@ -184,12 +204,15 @@ def login_admin(payload: AdminLoginRequest):
         )
 
 @router.post("/station/login", response_model=LoginResponse)
-def login_station(payload: StationLoginRequest):
+def login_station(payload: StationLoginRequest, request: Request):
     """
     Authenticates an Automatic Weather Station Operator against the SQLite database.
     Accepts either station username or station_id.
     """
     clean_identifier = payload.username.strip().lower()
+    ip = request.client.host if request.client else "unknown"
+    check_rate_limit(f"station_{clean_identifier}_{ip}")
+
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     
     with get_db() as conn:

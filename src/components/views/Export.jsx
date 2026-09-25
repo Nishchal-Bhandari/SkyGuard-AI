@@ -22,28 +22,57 @@ export const Export = () => {
     );
   }
 
-  const exportPayload = {
-    system: "SkyGuard",
-    version: "v1.4.2",
-    export_timestamp: new Date().toISOString(),
-    sha256_audit_hash: "8f7e2d9b4c0a1f3e5d7c9a8b6e4d2f0a1c3e5d7b9a8f6e4d2b0a1c3e5d7f9a8b",
-    quality_standards: "WMO-No. 8 / IMD AWS Specification",
-    fleet_summary: {
-      total_stations: stations.length,
-      normal: stations.filter(s => s.status === 'NORMAL').length,
-      suspect: stations.filter(s => s.status === 'SUSPECT' || s.status === 'CRITICAL').length,
-      extreme: stations.filter(s => s.status === 'EXTREME').length,
-      open_incidents: incidents.filter(i => i.status === 'open').length
-    },
-    telemetry_records: stations.map(s => ({
-      station_id: s.id,
-      name: s.name,
-      coordinates: { lat: s.lat, lon: s.lon, elevation_m: s.elevation },
-      quality_state: s.status,
-      measurements: s.sensors,
-      diagnostics: { battery_v: s.battery, rssi_dbm: s.signal, uptime_s: s.uptime_s }
-    }))
-  };
+  const [exportPayload, setExportPayload] = React.useState(null);
+
+  React.useEffect(() => {
+    const generatePayload = async () => {
+      const basePayload = {
+        system: "SkyGuard",
+        version: "v1.4.2",
+        export_timestamp: new Date().toISOString(),
+        quality_standards: "WMO-No. 8 / IMD AWS Specification",
+        fleet_summary: {
+          total_stations: stations.length,
+          normal: stations.filter(s => s.status === 'NORMAL').length,
+          suspect: stations.filter(s => s.status === 'SUSPECT' || s.status === 'CRITICAL').length,
+          extreme: stations.filter(s => s.status === 'EXTREME').length,
+          open_incidents: incidents.filter(i => i.status === 'open').length
+        },
+        telemetry_records: stations.map(s => ({
+          station_id: s.id || s.station_id,
+          name: s.name || s.station_name,
+          coordinates: { lat: s.latitude || s.lat, lon: s.longitude || s.lon, elevation_m: s.elevation },
+          quality_state: s.status,
+          measurements: s.sensors,
+          diagnostics: { battery_v: s.battery, rssi_dbm: s.signal, uptime_s: s.uptime_s || 0 }
+        }))
+      };
+
+      try {
+        const msgBuffer = new TextEncoder().encode(JSON.stringify(basePayload));
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+        setExportPayload({
+          ...basePayload,
+          sha256_audit_hash: hashHex
+        });
+      } catch (err) {
+        // Fallback for non-secure contexts if subtle is not available
+        setExportPayload({
+          ...basePayload,
+          sha256_audit_hash: "unavailable_in_insecure_context"
+        });
+      }
+    };
+    
+    generatePayload();
+  }, [stations, incidents]);
+
+  if (!exportPayload) {
+    return <div style={{ padding: '20px', color: 'var(--neon-cyan)' }}>Generating cryptographic payload...</div>;
+  }
 
   const handleDownload = () => {
     const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });

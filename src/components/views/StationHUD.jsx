@@ -477,9 +477,21 @@ export const StationHUD = () => {
 
           <div style={{ background: 'rgba(0, 240, 255, 0.05)', border: '1px solid rgba(0, 240, 255, 0.2)', padding: '8px 12px', borderRadius: '4px', fontSize: '0.74rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>REMAINING USEFUL LIFE (RUL):</span>
+              <span style={{ color: 'var(--text-muted)' }}>DEGRADATION PROJECTION (HEURISTIC):</span>
               <strong style={{ color: 'var(--neon-cyan)', fontFamily: 'var(--font-mono)' }}>
-                {sensorHealth?.predictive_maintenance?.remaining_useful_life_days ?? 180} DAYS
+                {sensorHealth?.predictive_maintenance?.degradation_projection_days ?? sensorHealth?.predictive_maintenance?.remaining_useful_life_days ?? 180} DAYS
+              </strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+              <span style={{ color: 'var(--text-muted)' }}>BATTERY VOLTAGE:</span>
+              <strong style={{ color: station.battery < 3.2 ? 'var(--neon-red)' : 'var(--neon-green)', fontFamily: 'var(--font-mono)' }}>
+                {station.battery?.toFixed(2) || 'N/A'} V
+              </strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+              <span style={{ color: 'var(--text-muted)' }}>MAINTENANCE RISK:</span>
+              <strong style={{ color: sensorHealth?.predictive_maintenance?.risk_level === 'HIGH' ? 'var(--neon-red)' : 'var(--neon-amber)', fontFamily: 'var(--font-mono)' }}>
+                {sensorHealth?.predictive_maintenance?.risk_level || 'LOW'}
               </strong>
             </div>
             <div style={{ color: 'var(--text-secondary)', fontSize: '0.70rem', lineHeight: 1.3 }}>

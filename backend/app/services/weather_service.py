@@ -56,7 +56,7 @@ def station_readiness(station_id: str) -> Dict[str, Any]:
 
 
 def fuse_anomaly_evidence(evidence: Dict[str, float]) -> Dict[str, Any]:
-    """Combine evidence with transparent default priors until fitted coefficients exist."""
+    """Combine evidence with fitted coefficients if available, else fallback to priors."""
     coefficients = {
         "intercept": -2.0,
         "z_qc": 1.1,
@@ -66,7 +66,24 @@ def fuse_anomaly_evidence(evidence: Dict[str, float]) -> Dict[str, Any]:
         "z_multi": 0.8,
         "z_health": 0.6,
     }
-    logit = coefficients["intercept"]
+    status_label = "DEFAULT_PRIORS"
+    
+    try:
+        from backend.app.storage.database import get_db
+        import json
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT coefficients, status FROM fusion_coefficients ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            if row:
+                db_coeffs = json.loads(row["coefficients"])
+                if db_coeffs:
+                    coefficients.update(db_coeffs)
+                    status_label = row["status"]
+    except Exception as e:
+        pass
+
+    logit = coefficients.get("intercept", -2.0)
     terms = {}
     for key, weight in coefficients.items():
         if key == "intercept":
@@ -79,8 +96,8 @@ def fuse_anomaly_evidence(evidence: Dict[str, float]) -> Dict[str, Any]:
         "score": probability_like,
         "logit": round(logit, 4),
         "terms": terms,
-        "coefficient_status": "DEFAULT_PRIORS",
-        "calibration_note": "Not a validated real-world probability until fitted and reliability-tested.",
+        "coefficient_status": status_label,
+        "calibration_note": "Fitted logistic probabilities." if status_label != "DEFAULT_PRIORS" else "Not a validated real-world probability until fitted and reliability-tested.",
     }
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -247,6 +264,41 @@ class WeatherService:
                     wind += 30.0
                     hum = 98.0
                     pres -= 8.0
+                elif f_type == "RH_SUPERSAT":
+                    hum = 105.0 + f_offset
+                elif f_type == "SENTINEL":
+                    temp = -999.0
+                    hum = 65535.0
+                    pres = -999.0
+                elif f_type == "MISSING":
+                    temp = None
+                    hum = None
+                    pres = None
+                elif f_type == "PRESSURE_OFFSET":
+                    pres += 15.0 + f_offset
+                elif f_type == "NOISE_BURST":
+                    temp += (random.random() - 0.5) * 20.0
+                    hum += (random.random() - 0.5) * 40.0
+                    pres += (random.random() - 0.5) * 30.0
+                elif f_type == "COMMS_DROPOUT":
+                    temp = None
+                    hum = None
+                    pres = None
+                    signal = -110
+                elif f_type == "SEA_BREEZE":
+                    temp -= 6.0
+                    hum += 15.0
+                    wind += 12.0
+                    
+            # L1 Sentinel / Missing Data Handling
+            is_missing = temp is None or hum is None or pres is None
+            is_sentinel = not is_missing and (temp <= -900 or hum >= 65000 or pres <= -900)
+            
+            if is_missing or is_sentinel:
+                # Force dummy safe values for pipeline continuation, flag as suspect
+                temp = temp if (temp is not None and not is_sentinel) else 25.0
+                hum = hum if (hum is not None and not is_sentinel) else 65.0
+                pres = pres if (pres is not None and not is_sentinel) else 1013.25
 
             # Level 1: Thermodynamic & Physical Bounds Verification
             thermo_valid, thermo_violations = thermo_engine.validate_thermodynamic_bounds(temp, pres, hum, elev)
@@ -281,14 +333,14 @@ class WeatherService:
 
             # Level 2: Immutable Hard Physical QC Rules
             qc_state = "NORMAL"
-            if not thermo_valid or temp < -50 or temp > 60 or hum < 0 or hum > 100 or pres < 800 or pres > 1200:
+            if not thermo_valid or temp < -50 or temp > 60 or hum < 0 or hum > 100 or pres < 800 or pres > 1200 or is_missing or is_sentinel:
                 qc_state = "SUSPECT"
-                if temp < -50 or temp > 60:
-                    wmo_t_flag = 2
-                if hum < 0 or hum > 100:
-                    wmo_h_flag = 2
-                if pres < 800 or pres > 1200:
-                    wmo_p_flag = 2
+                if temp < -50 or temp > 60 or is_missing or is_sentinel:
+                    wmo_t_flag = 2 if not (is_missing or is_sentinel) else 1
+                if hum < 0 or hum > 100 or is_missing or is_sentinel:
+                    wmo_h_flag = 2 if not (is_missing or is_sentinel) else 1
+                if pres < 800 or pres > 1200 or is_missing or is_sentinel:
+                    wmo_p_flag = 2 if not (is_missing or is_sentinel) else 1
 
             if battery < 11.0 or signal < -95 or is_flatline:
                 qc_state = "SUSPECT"
@@ -521,59 +573,52 @@ class WeatherService:
                         "unit": "hPa", "reason": "outside_station_normal_envelope"
                     })
 
-            # Spatial Consensus Logic
-            median_temp = None
-            residual = None
-            spatially_consistent = None
-            peer_anomaly_ratio = 0.0
-
-            if nearby_stations:
-                peer_temps = [float(p["temp"]) for p in nearby_stations if p.get("temp") is not None]
-                if peer_temps:
-                    median_temp = statistics.median(peer_temps)
-                    curr_temp = float(state["sensors"]["temperature"]["value"])
-                    residual = abs(curr_temp - median_temp)
-                    spatially_consistent = (residual <= 3.0)
+            # Spatial Consensus Logic (Phase 3: Residual Space)
+            from ml.spatial_engine import SpatialIntelligenceEngine
+            spatial_engine = SpatialIntelligenceEngine()
+            
+            # Pre-compute target z_T
+            target_ml = state.get("ml_model")
+            if target_ml and "feature_vector" in target_ml and len(target_ml["feature_vector"]) > 0:
+                state["z_T"] = target_ml["feature_vector"][0]
+            else:
+                state["z_T"] = 0.0
                 
-                anomalous_peers = [p for p in nearby_stations if p.get("status") in ["ANOMALY", "CRITICAL", "REGIONAL_EVENT", "LOCALIZED_ANOMALY"]]
-                peer_anomaly_ratio = len(anomalous_peers) / len(nearby_stations)
-                
-                if state["status"] in ["ANOMALY", "SUSPECT"] or (residual is not None and residual > 3.5):
-                    if residual is not None and residual <= 1.5:
-                        # Spatial Override Rule: If spatially consistent (deviation <= 1.5 °C),
-                        # demote to SPATIALLY_VALIDATED to avoid false alarms.
-                        state["status"] = "SPATIALLY_VALIDATED"
-                    elif len(nearby_stations) >= 2 and (spatially_consistent or peer_anomaly_ratio >= 0.4):
-                        state["status"] = "REGIONAL_EVENT"
-                    elif len(nearby_stations) >= 1:
-                        state["status"] = "LOCALIZED_ANOMALY"
-                        # Two-tier spatial escalation:
-                        # WMO 2 (ERRONEOUS) only when spatially inconsistent AND residual exceeds
-                        # the hard spatial threshold (SPATIAL_ERRONEOUS_K).
-                        if residual is not None and residual > SPATIAL_ERRONEOUS_K and not spatially_consistent:
-                            state["sensors"]["temperature"]["wmo_flag"] = 2
-                            state["sensors"]["temperature"]["status"] = "FLAG_ERRONEOUS"
-                        else:
-                            existing_flag = state["sensors"]["temperature"].get("wmo_flag", 0)
-                            if existing_flag < 1:
-                                state["sensors"]["temperature"]["wmo_flag"] = 1
-                                state["sensors"]["temperature"]["status"] = "FLAG_SUSPECT"
+            # Pre-compute peer z_T
+            for p in nearby_stations:
+                peer_ml = p.get("ml_model")
+                if peer_ml and "feature_vector" in peer_ml and len(peer_ml["feature_vector"]) > 0:
+                    p["z_T"] = peer_ml["feature_vector"][0]
+                else:
+                    p["z_T"] = 0.0
+            
+            spatial_analysis_dict = spatial_engine.compute_spatial_deviation(
+                target_station=state, 
+                nearby_stations=nearby_stations
+            )
+            
+            spatially_consistent = spatial_analysis_dict.get("spatially_consistent", True)
+            residual = spatial_analysis_dict.get("spatial_deviation_score", 0.0)
+            agreement_index = spatial_analysis_dict.get("agreement_index", 1.0)
+            peer_anomaly_ratio = spatial_analysis_dict.get("peer_anomaly_ratio", 0.0)
+            
+            if state["status"] in ["ANOMALY", "SUSPECT"] or (agreement_index < 0.01):
+                if agreement_index >= 0.32 and spatially_consistent:
+                    state["status"] = "SPATIALLY_VALIDATED"
+                elif len(nearby_stations) >= 2 and (spatially_consistent or peer_anomaly_ratio >= 0.4):
+                    state["status"] = "REGIONAL_EVENT"
+                elif len(nearby_stations) >= 1:
+                    state["status"] = "LOCALIZED_ANOMALY"
+                    if not spatially_consistent and agreement_index < 0.05:
+                        state["sensors"]["temperature"]["wmo_flag"] = 2
+                        state["sensors"]["temperature"]["status"] = "FLAG_ERRONEOUS"
                     else:
-                        state["status"] = "LOCALIZED_ANOMALY_UNCONFIRMED"
-
-            spatial_analysis_dict = {
-                "neighborhood_median_temp": round(float(median_temp), 1) if median_temp is not None else None,
-                "spatial_deviation_score": round(float(residual), 2) if residual is not None else 0.0,
-                "spatially_consistent": spatially_consistent if spatially_consistent is not None else None,
-                "peer_anomaly_ratio": round(float(peer_anomaly_ratio), 2),
-                "eligible_peer_count": len(nearby_stations),
-                "fleet_evidence_state": "AVAILABLE" if len(nearby_stations) >= 2 else "INCOMPLETE",
-                "fleet_evidence_reason": (
-                    "Sufficient eligible peers for corroboration."
-                    if len(nearby_stations) >= 2
-                    else "Insufficient eligible peers; regional consensus is unavailable."
-                )
-            }
+                        existing_flag = state["sensors"]["temperature"].get("wmo_flag", 0)
+                        if existing_flag < 1:
+                            state["sensors"]["temperature"]["wmo_flag"] = 1
+                            state["sensors"]["temperature"]["status"] = "FLAG_SUSPECT"
+                else:
+                    state["status"] = "LOCALIZED_ANOMALY_UNCONFIRMED"
 
             spatial_result_str = "UNAVAILABLE"
             if len(nearby_stations) > 0:
@@ -584,9 +629,9 @@ class WeatherService:
                 "nearby_stations": nearby_stations,
                 "closest_peer": nearby_stations[0] if nearby_stations else None,
                 "target_temperature": round(obs_temp, 1),
-                "spatial_deviation": round(float(residual), 1) if residual is not None else None,
+                "spatial_deviation": round(residual, 3),
                 "spatial_result": spatial_result_str,
-                "agreement_index": f"{max(0, min(100, int((1.0 - (residual / SPATIAL_ERRONEOUS_K)) * 100)))}%" if residual is not None else "N/A",
+                "agreement_index": f"{int(spatial_analysis_dict.get('agreement_index', 0)*100)}%",
                 "eligible_peer_count": len(nearby_stations),
                 "fleet_station_count": len(new_state),
                 "spatial_analysis": spatial_analysis_dict
@@ -597,14 +642,16 @@ class WeatherService:
 
             # 3. Multi-Class Automated Root-Cause Diagnosis
             root_cause_diag = root_cause_classifier.diagnose(
-                observation={"temp": obs_temp, "hum": obs_hum, "pres": obs_pres},
+                observation={"temp": obs_temp, "hum": obs_hum, "pres": obs_pres, "missing": is_missing},
+                last_observation=previous_observation if previous_state else None,
                 spatial_analysis=spatial_analysis_dict,
                 thermo_violations=state.get("thermodynamic_violations"),
                 battery_v=float(state["battery"]),
                 signal_dbm=float(state["signal"]),
                 ml_is_anomaly=bool(ml_res.get("is_anomaly", False)) if ml_res else False,
                 ml_score=float(ml_res.get("anomaly_score", 0.0) or 0.0) if ml_res else 0.0,
-                flatline_flag=state.get("is_flatline", False)
+                flatline_flag=state.get("is_flatline", False),
+                temporal_evidence=temporal_evidence
             )
             if classification == "REGIONAL_EVENT":
                 root_cause_diag = {
@@ -619,17 +666,22 @@ class WeatherService:
 
             # 4. Self-Healing Real-Time Imputation
             anomalous_params = []
-            if classification in ["LOCALIZED_ANOMALY", "CRITICAL", "SUSPECT"] or state.get("sensors", {}).get("temperature", {}).get("wmo_flag", 0) > 0:
-                anomalous_params.append("temperature")
-            if state.get("sensors", {}).get("humidity", {}).get("wmo_flag", 0) > 0:
-                anomalous_params.append("humidity")
-            if state.get("sensors", {}).get("pressure", {}).get("wmo_flag", 0) > 0:
-                anomalous_params.append("pressure")
+            if classification != "REGIONAL_EVENT":
+                if classification in ["LOCALIZED_ANOMALY", "CRITICAL", "SUSPECT"] or state.get("sensors", {}).get("temperature", {}).get("wmo_flag", 0) > 0:
+                    anomalous_params.append("temperature")
+                if state.get("sensors", {}).get("humidity", {}).get("wmo_flag", 0) > 0:
+                    anomalous_params.append("humidity")
+                if state.get("sensors", {}).get("pressure", {}).get("wmo_flag", 0) > 0:
+                    anomalous_params.append("pressure")
+
+            from backend.app.storage.database import get_station_climatology
+            climatology_results = get_station_climatology(st_id)
 
             imputed_data = imputation_engine.impute_observation(
                 target_station=state,
                 nearby_peers=nearby_stations,
-                anomalous_params=anomalous_params
+                anomalous_params=anomalous_params,
+                climatology_results=climatology_results
             )
             state["self_healing_data"] = imputed_data
 

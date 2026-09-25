@@ -128,69 +128,39 @@ class SpatialIntelligenceEngine:
                 "reason": "No fresh nearby stations within radius"
             }
 
-        readings = target_station.get("readings", target_station.get("sensors", {}))
-        target_temp = float(readings.get("temp", readings.get("temperature", 25.0)))
-        target_hum = float(readings.get("hum", readings.get("humidity", 60.0)))
-        target_pres = float(readings.get("pres", readings.get("pressure", 1010.0)))
-
-        def expected_value(station: Dict[str, Any], parameter: str, fallback: float) -> float:
-            baseline = station.get("baseline", station.get("expected", {}))
-            if isinstance(baseline, dict) and baseline.get(parameter) is not None:
-                return float(baseline[parameter])
-            return fallback
-
-        target_expected_temp = expected_value(target_station, "temp", 0.0)
+        target_z_T = target_station.get("z_T", 0.0)
+        peer_z_Ts = [p.get("z_T", 0.0) for p in nearby_stations]
+        
         peer_temps = [float(p.get("temp", p.get("readings", {}).get("temp", 25.0))) for p in nearby_stations]
-        peer_hums = [float(p.get("hum", p.get("readings", {}).get("hum", 60.0))) for p in nearby_stations]
-        peer_press = [float(p.get("pres", p.get("readings", {}).get("pres", 1010.0))) for p in nearby_stations]
-
-        peer_temp_residuals = [
-            value - expected_value(peer, "temp", 0.0)
-            for value, peer in zip(peer_temps, nearby_stations)
-        ]
-
         med_temp = get_median(peer_temps)
-        mad_temp = get_mad(peer_temps, med_temp) or 1.0
+        target_temp = float(target_station.get("readings", target_station.get("sensors", {})).get("temperature", target_station.get("temp", 25.0)))
         res_temp = abs(target_temp - med_temp)
-        med_temp_residual = get_median(peer_temp_residuals)
-        mad_temp_residual = get_mad(peer_temp_residuals, med_temp_residual)
-        sigma_peer = max(1.4826 * mad_temp_residual, 1.0)
-        target_temp_residual = target_temp - target_expected_temp
-        residual_distance = abs(target_temp_residual - med_temp_residual) / sigma_peer
-        # Ensure small deviations yield high percentage scores
-        agreement_index = max(0.0, 1.0 - (res_temp / 5.0))
+        
+        med_z_T = get_median(peer_z_Ts)
+        mad_z_T = get_mad(peer_z_Ts, med_z_T)
+        sigma_peer = max(1.4826 * mad_z_T, 1.0)
+        
+        # Agreement index A = exp(-D²/2)
+        D = abs(target_z_T - med_z_T) / sigma_peer
+        agreement_index = math.exp(-(D**2) / 2.0)
+        
+        spatially_consistent = agreement_index >= 0.50
 
-        med_hum = get_median(peer_hums)
-        res_hum = abs(target_hum - med_hum)
-
-        med_pres = get_median(peer_press)
-        res_pres = abs(target_pres - med_pres)
-
-        temp_dev = min(1.0, res_temp / 5.0)
-        hum_dev = min(1.0, res_hum / 25.0)
-        pres_dev = min(1.0, res_pres / 6.0)
-
-        spatial_score = round(0.55 * temp_dev + 0.25 * hum_dev + 0.20 * pres_dev, 3)
-        spatially_consistent = agreement_index >= 0.50 and spatial_score < 0.50
-
-        anomalous_peers = [p for p in nearby_stations if p.get("is_anomaly") or p.get("status") in ("SUSPECT", "EXTREME")]
+        anomalous_peers = [p for p in nearby_stations if p.get("is_anomaly") or p.get("status") in ("SUSPECT", "EXTREME", "ANOMALY", "LOCALIZED_ANOMALY", "REGIONAL_EVENT")]
         peer_anomaly_ratio = round(len(anomalous_peers) / len(nearby_stations), 2)
 
         return {
             "available": True,
             "nearby_count": len(nearby_stations),
-            "spatial_deviation_score": spatial_score,
+            "spatial_deviation_score": round(D, 3), # Store D here
             "spatially_consistent": spatially_consistent,
             "neighborhood_median_temp": round(med_temp, 1),
-            "neighborhood_mad_temp": round(mad_temp, 2),
             "residual_temp": round(res_temp, 1),
-            "target_temp_residual": round(target_temp_residual, 3),
-            "peer_median_temp_residual": round(med_temp_residual, 3),
-            "peer_sigma_temp_residual": round(sigma_peer, 3),
+            "peer_median_z_T": round(med_z_T, 3),
+            "peer_sigma_z_T": round(sigma_peer, 3),
+            "target_z_T": round(target_z_T, 3),
             "agreement_index": round(agreement_index, 3),
             "residual_space": True,
-            "neighborhood_median_hum": round(med_hum, 1),
-            "residual_hum": round(res_hum, 1),
             "peer_anomaly_ratio": peer_anomaly_ratio,
             "anomalous_peer_count": len(anomalous_peers),
             "nearest_peer_id": nearby_stations[0].get("id") if nearby_stations else None,
