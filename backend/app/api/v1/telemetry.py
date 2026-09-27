@@ -65,7 +65,7 @@ def get_esp32_latest_telemetry(station_id: str = "AWS-01"):
 @router.post("/telemetry/esp32/ingest")
 async def ingest_esp32_telemetry(
     payload: Dict[str, Any] = Body(...),
-    background_tasks: BackgroundTasks = BackgroundTasks()
+    background_tasks: BackgroundTasks = BackgroundTasks(), current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Receives a real-time telemetry frame dispatched by the ESP32 edge node.
@@ -104,6 +104,14 @@ async def ingest_esp32_telemetry(
         )
 
     station_id = str(payload.get("station_id", "AWS-01")).strip().upper()
+    # Verify station access if the user is a station_operator
+    if current_user.get("role") == "station_operator":
+        user_station = str(current_user.get("station_id", "")).strip().upper()
+        if user_station != station_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Station identity violation: token station '{user_station}' does not match payload station '{station_id}'."
+            )
     logger.info(f"[ESP32 INGEST] Received frame from station={station_id} device={payload.get('device_id')} seq={payload.get('seq')}")
 
     try:
@@ -167,11 +175,11 @@ def parse_iso_or_datetime(val: str) -> str:
             return dt.replace(tzinfo=datetime.timezone.utc).isoformat()
         except ValueError:
             continue
-    # Fallback to direct ISO if valid or now
+    # Fallback to direct ISO; raise if unparseable to avoid silent misdating
     try:
         return datetime.datetime.fromisoformat(clean_val).isoformat()
     except Exception:
-        return datetime.datetime.now(datetime.timezone.utc).isoformat()
+        raise ValueError(f"Unparseable timestamp: {clean_val}")
 
 
 @router.post("/stations/{station_id}/telemetry/upload")
