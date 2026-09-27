@@ -8,14 +8,16 @@ import statistics
 from typing import Dict, Any, List, Optional
 
 from backend.app.storage.database import (
-    get_db, 
-    get_all_active_faults, 
-    get_active_model_record, 
+    get_db,
+    get_all_active_faults,
+    get_active_model_record,
     get_station_qc_config,
     fetch_historical_telemetry,
     create_or_update_incident,
     resolve_open_incidents_for_station,
-    persist_assessment
+    persist_assessment,
+    record_regional_event,
+    count_consecutive_regional_events
 )
 from backend.app.services.training_service import training_service
 
@@ -37,6 +39,64 @@ TEMP_SOFT_MARGIN   = 0.5   # °C  — sensor accuracy spec ± 0.3 °C + 0.2 °C 
 HUM_SOFT_MARGIN    = 2.0   # %RH — sensor accuracy spec ± 1.5 %
 PRES_SOFT_MARGIN   = 1.5   # hPa — sensor accuracy spec ± 1 hPa + 0.5 hPa guard
 SPATIAL_ERRONEOUS_K = 5.0 # °C  — spatial residual threshold for WMO 2 upgrade
+REGIONAL_PEER_FRESHNESS_SECONDS = 1800
+REGIONAL_EVENT_MAX_GAP_SECONDS = 1800
+
+
+def normalize_source_timestamp(value: Optional[str]) -> str:
+    """Return a source timestamp in UTC; use current UTC only when no source time exists."""
+    if value:
+        try:
+            parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+            return parsed.astimezone(datetime.timezone.utc).isoformat()
+        except ValueError:
+            logger.warning("Invalid upstream observation time %r; using receipt time", value)
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def regional_event_consensus(
+    target_z: float,
+    peer_z_scores: List[float],
+    agreement_index: float,
+    minimum_peers: int = 2,
+    departure_threshold: float = 2.0,
+    minimum_fraction: float = 0.5,
+) -> bool:
+    """Require a local departure and a same-direction majority of peer departures."""
+    if len(peer_z_scores) < minimum_peers or agreement_index < 0.32 or abs(target_z) < departure_threshold:
+        return False
+    direction = 1 if target_z > 0 else -1
+    corroborating = sum(
+        1 for score in peer_z_scores
+        if abs(score) >= departure_threshold and (1 if score > 0 else -1) == direction
+    )
+    return corroborating / len(peer_z_scores) > minimum_fraction
+
+
+def is_eligible_regional_peer(peer: Dict[str, Any], target_timestamp: str) -> bool:
+    """A peer must have valid data, a usable residual model and a fresh source time."""
+    if peer.get("qc_flag") != "VALID":
+        return False
+    readiness = peer.get("readiness", {}).get("tier")
+    model = peer.get("ml_model") or {}
+    features = model.get("feature_vector") or []
+    if readiness not in {"TRAINED", "MATURE"} or not model.get("has_model") or not features:
+        return False
+    try:
+        target_dt = datetime.datetime.fromisoformat(target_timestamp.replace("Z", "+00:00"))
+        peer_dt = datetime.datetime.fromisoformat(str(peer["source_timestamp"]).replace("Z", "+00:00"))
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if target_dt.tzinfo is None:
+            target_dt = target_dt.replace(tzinfo=datetime.timezone.utc)
+        if peer_dt.tzinfo is None:
+            peer_dt = peer_dt.replace(tzinfo=datetime.timezone.utc)
+        if abs((target_dt - peer_dt).total_seconds()) > REGIONAL_PEER_FRESHNESS_SECONDS:
+            return False
+        return abs((now - peer_dt.astimezone(datetime.timezone.utc)).total_seconds()) <= REGIONAL_PEER_FRESHNESS_SECONDS
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def station_readiness(station_id: str) -> Dict[str, Any]:
@@ -176,7 +236,7 @@ class WeatherService:
             "latitude": ",".join(lats),
             "longitude": ",".join(lons),
             "current": "temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,wind_direction_10m,precipitation,weather_code,is_day",
-            "timezone": "auto"
+            "timezone": "UTC"
         }
 
         try:
@@ -461,6 +521,8 @@ class WeatherService:
                 "battery": battery,
                 "signal": signal,
                 "last_seen": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "source_timestamp": normalize_source_timestamp(current.get("time")),
+                "qc_flag": "VALID" if thermo_valid and not is_missing and not is_sentinel and max(wmo_t_flag, wmo_h_flag, wmo_p_flag) < 2 else "ERRONEOUS",
                 "sensors": {
                     "temperature": {"value": round(float(temp), 1), "unit": "°C", "wmo_flag": wmo_t_flag, "status": "FLAG_GOOD" if wmo_t_flag == 0 else ("FLAG_SUSPECT" if wmo_t_flag == 1 else "FLAG_ERRONEOUS")},
                     "humidity": {"value": round(float(hum), 1), "unit": "%", "wmo_flag": wmo_h_flag, "status": "FLAG_GOOD" if wmo_h_flag == 0 else ("FLAG_SUSPECT" if wmo_h_flag == 1 else "FLAG_ERRONEOUS")},
@@ -503,7 +565,11 @@ class WeatherService:
                         "temperature": other_state["sensors"]["temperature"]["value"],
                         "hum": other_state["sensors"]["humidity"]["value"],
                         "pres": other_state["sensors"]["pressure"]["value"],
-                        "status": other_state["status"]
+                        "status": other_state["status"],
+                        "qc_flag": other_state.get("qc_flag", "ERRONEOUS"),
+                        "readiness": other_state.get("readiness", {}),
+                        "ml_model": other_state.get("ml_model", {}),
+                        "source_timestamp": other_state.get("source_timestamp")
                     })
             
             # Sort by distance and retain closest peers
@@ -609,10 +675,15 @@ class WeatherService:
                     p["z_T"] = peer_ml["feature_vector"][0]
                 else:
                     p["z_T"] = 0.0
+
+            eligible_peers = [
+                p for p in nearby_stations
+                if is_eligible_regional_peer(p, state["source_timestamp"])
+            ]
             
             spatial_analysis_dict = spatial_engine.compute_spatial_deviation(
                 target_station=state, 
-                nearby_stations=nearby_stations
+                nearby_stations=eligible_peers
             )
             
             spatially_consistent = spatial_analysis_dict.get("spatially_consistent", True)
@@ -620,41 +691,39 @@ class WeatherService:
             agreement_index = spatial_analysis_dict.get("agreement_index", 1.0)
             peer_anomaly_ratio = spatial_analysis_dict.get("peer_anomaly_ratio", 0.0)
             
-            if state["status"] in ["ANOMALY", "SUSPECT"] or (agreement_index < 0.01):
-                if agreement_index >= 0.32 and spatially_consistent:
-                    state["status"] = "SPATIALLY_VALIDATED"
-                elif len(nearby_stations) >= 2 and (spatially_consistent or peer_anomaly_ratio >= 0.4):
-                    # Verify regional-event rules: peer validity, same‑direction agreement, persistence (placeholder)
-                    # Peer validity: ensure peers have QC flag VALID (already filtered by spatial engine)
-                    # Same‑direction agreement: require agreement_index >= 0.32 (already part of condition)
-                    # Persistence: placeholder – always allow for now (could be extended with DB tracking)
-                    state["status"] = "REGIONAL_EVENT"
-                elif len(nearby_stations) >= 1:
-                    state["status"] = "LOCALIZED_ANOMALY"
-                    if not spatially_consistent and agreement_index < 0.05:
-                        state["sensors"]["temperature"]["wmo_flag"] = 2
-                        state["sensors"]["temperature"]["status"] = "FLAG_ERRONEOUS"
-                    else:
-                        existing_flag = state["sensors"]["temperature"].get("wmo_flag", 0)
-                        if existing_flag < 1:
-                            state["sensors"]["temperature"]["wmo_flag"] = 1
-                            state["sensors"]["temperature"]["status"] = "FLAG_SUSPECT"
-                else:
-                    state["status"] = "LOCALIZED_ANOMALY_UNCONFIRMED"
+            peer_z_scores = [float(p["ml_model"]["feature_vector"][0]) for p in eligible_peers]
+            target_z = float(state.get("z_T", 0.0))
+            local_anomaly = state["status"] in {"ANOMALY", "SUSPECT"}
+            candidate = local_anomaly and state.get("qc_flag") == "VALID" and regional_event_consensus(
+                target_z, peer_z_scores, float(agreement_index)
+            )
+            source_timestamp = state["source_timestamp"]
+            record_regional_event(st_id, source_timestamp, candidate)
+            persistence = count_consecutive_regional_events(
+                st_id, source_timestamp, REGIONAL_EVENT_MAX_GAP_SECONDS
+            )
+
+            if candidate and persistence >= 2:
+                state["status"] = "REGIONAL_EVENT"
+            elif local_anomaly:
+                state["status"] = "LOCALIZED_ANOMALY" if eligible_peers else "LOCALIZED_ANOMALY_UNCONFIRMED"
+                if eligible_peers and not spatially_consistent and agreement_index < 0.05:
+                    state["sensors"]["temperature"]["wmo_flag"] = 2
+                    state["sensors"]["temperature"]["status"] = "FLAG_ERRONEOUS"
 
             spatial_result_str = "UNAVAILABLE"
-            if len(nearby_stations) > 0:
+            if len(eligible_peers) > 0:
                 spatial_result_str = "CONSISTENT" if spatially_consistent else "CONTRADICTED"
 
             state["spatial_data"] = {
                 "search_radius_km": 60.0,
-                "nearby_stations": nearby_stations,
-                "closest_peer": nearby_stations[0] if nearby_stations else None,
+                "nearby_stations": eligible_peers,
+                "closest_peer": eligible_peers[0] if eligible_peers else None,
                 "target_temperature": round(obs_temp, 1),
                 "spatial_deviation": round(residual, 3),
                 "spatial_result": spatial_result_str,
                 "agreement_index": f"{int(spatial_analysis_dict.get('agreement_index', 0)*100)}%",
-                "eligible_peer_count": len(nearby_stations),
+                "eligible_peer_count": len(eligible_peers),
                 "fleet_station_count": len(new_state),
                 "spatial_analysis": spatial_analysis_dict
             }
@@ -701,7 +770,7 @@ class WeatherService:
 
             imputed_data = imputation_engine.impute_observation(
                 target_station=state,
-                nearby_peers=nearby_stations,
+                nearby_peers=eligible_peers,
                 anomalous_params=anomalous_params,
                 climatology_results=climatology_results
             )
@@ -721,7 +790,7 @@ class WeatherService:
 
             # Calculate Evidence Fusion early to calibrate Confidence
             evidence_completeness = round(
-                min(1.0, 0.5 + (0.25 if ml_res and ml_res.get("has_model") else 0.0) + (0.25 if len(nearby_stations) >= 2 else 0.0)),
+                min(1.0, 0.5 + (0.25 if ml_res and ml_res.get("has_model") else 0.0) + (0.25 if len(eligible_peers) >= 2 else 0.0)),
                 2
             )
             
@@ -737,7 +806,9 @@ class WeatherService:
 
             # Confidence logic based on multi-source evidence and fusion score
             confidence = "MEDIUM"
-            if classification == "ANOMALY" and len(nearby_stations) == 0:
+            if classification == "LOCALIZED_ANOMALY_UNCONFIRMED":
+                confidence = "LOW"
+            elif classification == "ANOMALY" and len(eligible_peers) == 0:
                 confidence = "LOW"
             elif classification in ["CRITICAL", "LOCALIZED_ANOMALY", "REGIONAL_EVENT", "SPATIALLY_VALIDATED"]:
                 if evidence_completeness >= 0.90 and fusion_result["score"] >= 0.75:
@@ -1038,6 +1109,7 @@ class WeatherService:
             "latitude": float(station_meta.get("latitude", 0.0)),
             "longitude": float(station_meta.get("longitude", 0.0)),
             "status": final_status,
+            "source_timestamp": normalize_source_timestamp(payload.get("timestamp")),
             "battery": battery,
             "signal": -72.0,
             "last_seen": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -1113,7 +1185,7 @@ class WeatherService:
         # --- Persist to database ---
         try:
             from backend.app.storage.database import insert_telemetry_batch
-            ts_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            ts_now = cloud_state["source_timestamp"]
             insert_telemetry_batch(station_id, [{
                 "timestamp": ts_now,
                 "temp": temp,

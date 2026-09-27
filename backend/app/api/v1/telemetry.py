@@ -2,7 +2,7 @@ import io
 import csv
 import json
 import datetime
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, status, Body, BackgroundTasks, Request
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, status, Body, BackgroundTasks, Request, Header
 from typing import Optional, Dict, Any, List
 
 from backend.app.storage.database import (
@@ -14,6 +14,7 @@ from backend.app.storage.database import (
 )
 from backend.app.storage.database import get_db
 from backend.app.api.v1.auth import get_current_user, require_station_access
+from backend.app.auth.security import verify_password
 from backend.app.services.weather_service import weather_service
 
 import logging
@@ -24,7 +25,7 @@ INGEST_RATE_LIMIT: dict[str, list[float]] = {}
 RATE_LIMIT_MAX = 100  # max requests per window
 RATE_LIMIT_WINDOW = 60  # seconds
 
-def enforce_rate_limit(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+def enforce_rate_limit(request: Request):
     """Raise HTTPException if the client exceeds the allowed request rate."""
     key = request.client.host if request.client else "unknown"
     now = datetime.datetime.now(datetime.timezone.utc).timestamp()
@@ -50,8 +51,7 @@ router = APIRouter(tags=["Telemetry Ingestion & Stats"])
 
 
 # =============================================================================
-# ESP32 Edge-Node Ingestion & Health Endpoints (no auth required — station uses
-# a shared network endpoint; authentication is by source IP / station_id claim)
+# ESP32 Edge-Node Ingestion & Health Endpoints
 # =============================================================================
 
 @router.get("/telemetry/esp32/health")
@@ -92,10 +92,11 @@ def get_esp32_latest_telemetry(station_id: str = "AWS-01"):
 
 @router.post("/telemetry/esp32/ingest")
 async def ingest_esp32_telemetry(
+    request: Request,
     payload: Dict[str, Any] = Body(...),
     background_tasks: BackgroundTasks = BackgroundTasks(),
-    request: Request,
-    current_user: Dict[str, Any] = Depends(get_current_user),
+    authorization: Optional[str] = Header(None),
+    x_station_key: Optional[str] = Header(None),
     rate_limit: None = Depends(enforce_rate_limit)
 ):
     """
@@ -135,10 +136,30 @@ async def ingest_esp32_telemetry(
         )
 
     station_id = str(payload.get("station_id", "AWS-01")).strip().upper()
-    # Verify station access if the user is a station_operator
-    if current_user.get("role") == "station_operator":
+    if authorization:
+        current_user = get_current_user(authorization)
+    elif x_station_key:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT station_id, status, device_key_hash FROM stations WHERE station_id = ?", (station_id,))
+            device_station = cur.fetchone()
+        if not device_station or device_station.get("status") != "ACTIVE":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid station device credentials")
+        key_hash = device_station.get("device_key_hash")
+        if not key_hash or not verify_password(x_station_key, key_hash):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid station device credentials")
+        current_user = {"sub": f"device:{station_id}", "role": "station_device", "station_id": station_id}
+    else:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token or station device key required")
+
+    if current_user.get("role") in {"station_operator", "station_device"}:
         user_station = str(current_user.get("station_id", "")).strip().upper()
         if user_station != station_id:
+            log_ingest_audit(
+                station_id, payload.get("device_id"), current_user,
+                request.client.host if request.client else "unknown", False,
+                "Station identity mismatch",
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Station identity violation: token station '{user_station}' does not match payload station '{station_id}'."
@@ -148,12 +169,12 @@ async def ingest_esp32_telemetry(
     try:
         result = weather_service.process_esp32_frame(payload)
         # Log successful ingest
-        log_ingest_audit(station_id, payload.get("device_id"), current_user, request.client.host, True, "Ingest successful")
+        log_ingest_audit(station_id, payload.get("device_id"), current_user, request.client.host if request.client else "unknown", True, "Ingest successful")
         return result
     except Exception as e:
         logger.error(f"[ESP32 INGEST ERROR] {station_id}: {e}", exc_info=True)
         # Log failure
-        log_ingest_audit(station_id, payload.get("device_id"), current_user, request.client.host, False, str(e))
+        log_ingest_audit(station_id, payload.get("device_id"), current_user, request.client.host if request.client else "unknown", False, str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"ESP32 frame processing failed: {str(e)}"
@@ -302,7 +323,11 @@ async def upload_station_telemetry(
                 if not raw_ts:
                     rejected_rows.append({"line": line_idx, "reason": "Missing timestamp column"})
                     continue
-                parsed_ts = parse_iso_or_datetime(raw_ts)
+                try:
+                    parsed_ts = parse_iso_or_datetime(raw_ts)
+                except ValueError as e:
+                    rejected_rows.append({"line": line_idx, "reason": str(e)})
+                    continue
 
                 # For gridded spatial data: store coordinates in a separate grid_point
                 # field ("lat,lon") instead of embedding them in the timestamp string.

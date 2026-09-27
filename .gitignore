@@ -11,3 +11,5 @@ backend/data/*.db-wal
 backend/data/*.db-shm
 .env
 scratch_*.py
+acceptance_status.json
+ESP32/secrets.h

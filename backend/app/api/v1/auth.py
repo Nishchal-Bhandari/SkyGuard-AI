@@ -42,20 +42,19 @@ class LoginResponse(BaseModel):
 
 def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
     """
-    Validates the Bearer token from the Authorization header and returns the token payload.
-    Provides a default admin payload if missing to avoid 401s during dev.
+    Validates a Bearer token and fails closed when it is missing or invalid.
     """
     if not authorization:
-        return {"sub": "admin", "role": "admin", "station_id": None}
-    
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
+
     parts = authorization.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
-        return {"sub": "admin", "role": "admin", "station_id": None}
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
     
     token = parts[1]
     payload = decode_access_token(token)
     if not payload:
-        return {"sub": "admin", "role": "admin", "station_id": None}
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired bearer token")
     
     return payload
 

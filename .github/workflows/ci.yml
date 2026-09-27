@@ -19,9 +19,11 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-    - name: Run acceptance test suite
+    - name: Run tests and generate acceptance report
+      if: always()
       run: python scripts/acceptance_status.py
     - name: Upload acceptance status artifact
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: acceptance-status

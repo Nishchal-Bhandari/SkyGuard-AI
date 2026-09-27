@@ -1,13 +1,15 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Body, BackgroundTasks, Response
 from typing import Optional, Dict, Any, List
 import json
+import math
 
 from backend.app.storage.database import (
     get_active_model_record,
     list_station_models,
     list_training_jobs,
     get_training_job,
-    rollback_model_version
+    rollback_model_version,
+    get_db
 )
 from backend.app.services.training_service import training_service
 from backend.app.services.model_storage import model_storage_service
@@ -214,6 +216,58 @@ def rollback_station_model(
             detail=f"Rollback failed: {str(e)}"
         )
 
+
+@router.post("/stations/{station_id}/models/{model_version}/promote")
+def promote_station_model(
+    station_id: str,
+    model_version: str,
+    admin_user: Dict[str, Any] = Depends(require_admin)
+):
+    """
+    Promote a specific model version to ACTIVE after verifying promotion gates.
+    Only Central Admin can invoke.
+    Promotion Gates (example):
+      - metrics JSON must contain "validation_score" >= 0.85
+    """
+    clean_id = station_id.strip().upper()
+    with get_db() as conn:
+        cur = conn.cursor()
+        # Fetch target model record
+        cur.execute("""
+            SELECT id, metrics FROM model_registry
+            WHERE station_id = ? AND model_version = ?
+        """, (clean_id, model_version))
+        target = cur.fetchone()
+        if not target:
+            raise HTTPException(status_code=404, detail="Model version not found")
+        # Parse metrics JSON safely
+        try:
+            metrics_value = target["metrics"]
+            metrics = json.loads(metrics_value) if isinstance(metrics_value, str) else (metrics_value or {})
+            validation_score = float(metrics.get("validation_score"))
+        except (TypeError, ValueError, json.JSONDecodeError, AttributeError):
+            validation_score = float("nan")
+        if not math.isfinite(validation_score) or not 0.85 <= validation_score <= 1.0:
+            raise HTTPException(status_code=400, detail="Model does not meet promotion validation_score >= 0.85")
+        # Archive any currently active model
+        cur.execute("""
+            UPDATE model_registry
+            SET status = 'ARCHIVED'
+            WHERE station_id = ? AND status = 'ACTIVE'
+        """, (clean_id,))
+        # Promote target model
+        cur.execute("""
+            UPDATE model_registry
+            SET status = 'ACTIVE'
+            WHERE id = ?
+        """, (target["id"],))
+        conn.commit()
+    return {
+        "success": True,
+        "station_id": clean_id,
+        "promoted_version": model_version,
+        "message": "Model promoted to ACTIVE"
+    }
 
 @router.post("/stations/{station_id}/score")
 def score_realtime_telemetry(

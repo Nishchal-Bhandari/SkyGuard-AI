@@ -11,6 +11,7 @@ from backend.app.api.v1.auth import router as auth_router
 from backend.app.api.v1.stations import router as stations_router
 from backend.app.api.v1.telemetry import router as telemetry_router
 from backend.app.api.v1.models import router as models_router
+from backend.app.api.v1.evidence import router as evidence_router
 from backend.app.api.v1.faults import router as faults_router
 from backend.app.api.v1.incidents import router as incidents_router
 from backend.app.api.v1.maintenance import router as maintenance_router
@@ -62,6 +63,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(telemetry_router, prefix="/api/v1")
 app.include_router(models_router, prefix="/api/v1")
+app.include_router(evidence_router, prefix="/api/v1")
 app.include_router(faults_router, prefix="/api/v1")
 app.include_router(incidents_router, prefix="/api/v1")
 app.include_router(maintenance_router, prefix="/api/v1")

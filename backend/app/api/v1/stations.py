@@ -1,5 +1,6 @@
 import datetime
 import re
+import secrets
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union
@@ -373,6 +374,32 @@ def reset_station_password(station_id: str, payload: ResetPasswordRequest, admin
             "station_id": target_id,
             "message": f"Passphrase for {target_id} updated and hashed in SQLite."
         }
+
+
+@router.post("/admin/stations/{station_id}/device-key", response_model=Dict[str, Any])
+def rotate_station_device_key(
+    station_id: str,
+    admin_user: Dict[str, Any] = Depends(require_admin),
+):
+    """Rotate an edge-device key and return the plaintext once to an administrator."""
+    target_id = station_id.strip().upper()
+    device_key = secrets.token_urlsafe(32)
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT station_id FROM stations WHERE station_id = ?", (target_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail=f"Station '{target_id}' not found")
+        cur.execute(
+            "UPDATE stations SET device_key_hash = ?, updated_at = ? WHERE station_id = ?",
+            (hash_password(device_key), now_iso, target_id),
+        )
+    return {
+        "success": True,
+        "station_id": target_id,
+        "device_key": device_key,
+        "message": "Store this key in the station's local secrets.h file. It will not be shown again.",
+    }
 
 
 @router.get('/stations/{station_id}/qc')

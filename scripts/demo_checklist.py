@@ -2,46 +2,56 @@
 """Automated Demo Checklist
 
 Steps performed:
-1. **Seed stations** – ensure required stations exist in the DB.
-2. **Load deterministic telemetry** from `test_weather.csv` into the `telemetry` table.
-3. **Run deterministic replay** using the existing `offline_replay.py` script.
-4. **Backup the database** (SQLite file) to a timestamped copy.
-5. **Restore the database** from the backup to verify backup‑restore works.
-6. **Rehearsals** – run the replay a few times to simulate repeated demo runs.
+1. Seed stations with real coordinates.
+2. Load deterministic telemetry from test_weather.csv.
+3. Run deterministic replay via offline_replay.py.
+4. Backup the SQLite DB, validate restore.
+5. Rehearsals (3 replay runs).
 
-The script is self‑contained, uses only local files and the existing
-backend storage APIs, and therefore does *not* hit any external services.
+Uses only local files - no external services.
 """
 
 import os
 import shutil
 import csv
+import hashlib
 import datetime
 import subprocess
+import sys
 from pathlib import Path
 
-# Project imports – adjust PYTHONPATH if executed from the repo root
-import sys
-sys.path.append(str(Path(__file__).resolve().parents[0]))  # repo root
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.app.storage.database import get_db, insert_telemetry_batch, init_db
 from backend.app.config import DATABASE_URL, IS_POSTGRES
 
-# ---------------------------------------------------------------------------
-# Helper utilities
-# ---------------------------------------------------------------------------
+# Real station coordinates for demo
+DEMO_STATIONS = {
+    "AWS-01": {"name": "Bengaluru Urban", "lat": 12.9716, "lon": 77.5946, "elev": 920, "region": "Deccan Plateau"},
+    "AWS-07": {"name": "Hyderabad Deccan", "lat": 17.385, "lon": 78.486, "elev": 542, "region": "Deccan"},
+    "AWS-08": {"name": "Visakhapatnam Coast", "lat": 17.686, "lon": 83.218, "elev": 45, "region": "Eastern Coast"},
+}
+
 
 def db_path() -> Path:
-    """Return the absolute path to the SQLite DB file (used in dev mode)."""
     if IS_POSTGRES:
         raise RuntimeError("Demo checklist only supports the local SQLite database.")
-    # DATABASE_URL is in the form "sqlite:///path/to/file.db"
     url = DATABASE_URL
     if url.startswith("sqlite:///"):
         return Path(url[10:])
     raise RuntimeError(f"Unexpected DATABASE_URL format: {url}")
 
-def backup_database():
+
+def file_hash(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def backup_database() -> Path:
     src = db_path()
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     backup = src.parent / f"skyguard_backup_{timestamp}.db"
@@ -49,123 +59,119 @@ def backup_database():
     print(f"Database backed up to {backup}")
     return backup
 
-def restore_database(backup_path: Path):
+
+def restore_database(backup_path: Path) -> None:
     src = db_path()
     shutil.copy2(backup_path, src)
     print(f"Database restored from {backup_path}")
 
-def seed_stations_from_csv(csv_path: Path):
-    """Insert any stations referenced in the CSV that are not already present."""
-    stations = {}
-    with csv_path.open(newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            sid = row.get("station_id", "").strip().upper()
-            if not sid:
-                continue
-            # Use placeholder values for required fields; these are not used in the demo logic.
-            stations[sid] = {
-                "station_id": sid,
-                "station_name": f"Demo {sid}",
-                "username": f"demo_{sid.lower()}",
-                "password_hash": "hash",  # placeholder – real auth not exercised in demo
-                "latitude": 0.0,
-                "longitude": 0.0,
-                "elevation": 0.0,
-                "region": "Demo",
-                "status": "ACTIVE",
-            }
-    # Insert missing stations directly via SQL
+
+def seed_demo_stations():
     with get_db() as conn:
         cur = conn.cursor()
-        for sid, data in stations.items():
+        for sid, info in DEMO_STATIONS.items():
             cur.execute("SELECT 1 FROM stations WHERE station_id = ?", (sid,))
             if cur.fetchone():
-                continue  # already present
+                cur.execute(
+                    """UPDATE stations SET station_name = ?, latitude = ?, longitude = ?, elevation = ?, region = ?, status = 'ACTIVE'
+                       WHERE station_id = ?""",
+                    (info["name"], info["lat"], info["lon"], info["elev"], info["region"], sid),
+                )
+                continue
+            now = datetime.datetime.now(datetime.timezone.utc).isoformat()
             cur.execute(
-                """INSERT INTO stations (station_id, station_name, username, password_hash, latitude, longitude, elevation, region, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    data["station_id"],
-                    data["station_name"],
-                    data["username"],
-                    data["password_hash"],
-                    data["latitude"],
-                    data["longitude"],
-                    data["elevation"],
-                    data["region"],
-                    data["status"],
-                ),
+                """INSERT INTO stations (station_id, station_name, username, password_hash,
+                   latitude, longitude, elevation, region, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (sid, info["name"], f"demo_{sid.lower()}", "hash",
+                 info["lat"], info["lon"], info["elev"], info["region"], "ACTIVE", now, now),
             )
         conn.commit()
-    print(f"Seeded {len(stations)} stations into the DB.")
+    print(f"Seeded {len(DEMO_STATIONS)} demo stations.")
+
 
 def load_telemetry_from_csv(csv_path: Path):
-    """Read CSV rows and bulk‑insert them via `insert_telemetry_batch`."""
     rows_by_station = {}
     with csv_path.open(newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            sid = row.get("station_id", "").strip().upper()
-            if not sid:
-                continue
+            sid = (row.get("station_id") or "AWS-01").strip().upper()
+            ts = row.get("timestamp") or row.get("date") or row.get("time")
+            if not ts:
+                raise ValueError("Demo CSV requires a timestamp/date/time column")
             rows_by_station.setdefault(sid, []).append({
-                "timestamp": row.get("timestamp"),
-                "temp": float(row.get("temperature_c", 0)),
-                "hum": float(row.get("humidity_pct", 0)),
-                "pres": float(row.get("pressure_hpa", 0)),
-                "wind": float(row.get("wind_speed_kmh", 0)),
-                "rain": float(row.get("rainfall_mm", 0)),
-                # other fields can be omitted – defaults will be used
+                "timestamp": ts,
+                "temp": float(row.get("temperature_c", row.get("temp", row.get("temperature", 0)))),
+                "hum": float(row.get("humidity_pct", row.get("hum", row.get("humidity", 0)))),
+                "pres": float(row.get("pressure_hpa", row.get("pres", row.get("pressure", 0)))),
+                "wind": float(row.get("wind_speed_kmh", row.get("wind", row.get("wind_speed", 0)))),
+                "rain": float(row.get("rainfall_mm", row.get("rain", row.get("rainfall", 0)))),
             })
-    # Bulk insert per station
+    if not rows_by_station:
+        raise ValueError("Demo CSV contains no usable telemetry rows")
     for sid, rows in rows_by_station.items():
         insert_telemetry_batch(sid, rows)
     print(f"Loaded telemetry for {len(rows_by_station)} stations from {csv_path.name}.")
 
-def run_replay(station_id: str):
-    """Execute the offline replay script for a given station."""
-    subprocess.run(["python", "scripts/offline_replay.py", "--station", station_id], check=True)
 
-def rehearsals(station_id: str, count: int = 3):
-    """Run the replay a few times to simulate a demo rehearsal."""
-    for i in range(1, count + 1):
-        print(f"Rehearsal {i}/{count} for station {station_id}")
-        run_replay(station_id)
+def run_replay(station_id: str) -> bool:
+    result = subprocess.run(
+        [sys.executable, "scripts/offline_replay.py", "--station", station_id, "--limit", "48"],
+        capture_output=True, text=True,
+    )
+    print(result.stdout)
+    if result.returncode != 0:
+        print(f"Replay FAILED for {station_id}:\n{result.stderr}")
+        return False
+    return True
+
+
+def validate_backup_restore():
+    src = db_path()
+    original_hash = file_hash(src)
+    backup_path = backup_database()
+    # Restore
+    restore_database(backup_path)
+    restored_hash = file_hash(src)
+    if original_hash != restored_hash:
+        print("ERROR: Backup/restore integrity check FAILED (hash mismatch).")
+        sys.exit(1)
+    print("Backup/restore integrity check PASSED.")
+    # Clean up backup
+    backup_path.unlink(missing_ok=True)
+
 
 def main():
-    # Ensure DB schema exists
     init_db()
-
     csv_file = Path("test_weather.csv")
     if not csv_file.is_file():
         raise FileNotFoundError(f"Test data CSV not found: {csv_file}")
 
     # 1. Seed stations
-    seed_stations_from_csv(csv_file)
+    seed_demo_stations()
 
     # 2. Load deterministic telemetry
     load_telemetry_from_csv(csv_file)
 
-    # 3. Deterministic replay (once)
-    # Determine a sample station ID from the CSV (first row)
-    with csv_file.open(newline='') as f:
-        reader = csv.DictReader(f)
-        first_row = next(reader)
-        sample_station = first_row["station_id"].strip().upper()
+    # 3. Pick a sample station and replay
+    with csv_file.open(newline="") as f:
+        first_row = next(csv.DictReader(f), {})
+    sample_station = (first_row.get("station_id") or "AWS-01").strip().upper()
     print(f"Running initial replay for station {sample_station}")
-    run_replay(sample_station)
+    if not run_replay(sample_station):
+        sys.exit(1)
 
-    # 4. Backup DB
-    backup_path = backup_database()
+    # 4. Backup & validate restore
+    validate_backup_restore()
 
-    # 5. Restore DB (to confirm process works)
-    restore_database(backup_path)
-
-    # 6. Rehearsals
-    rehearsals(sample_station, count=3)
+    # 5. Rehearsals
+    for i in range(1, 4):
+        print(f"Rehearsal {i}/3 for station {sample_station}")
+        if not run_replay(sample_station):
+            sys.exit(1)
 
     print("Demo checklist completed successfully.")
+
 
 if __name__ == "__main__":
     main()

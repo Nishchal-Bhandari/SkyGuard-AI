@@ -18,7 +18,10 @@ os.environ["SKYGUARD_DB_PATH"] = temp_db_path
 temp_models_dir = tempfile.mkdtemp()
 os.environ["MODEL_STORAGE_PATH"] = temp_models_dir
 
-from backend.app.storage.database import init_db, get_db, fetch_historical_telemetry, get_active_model_record
+from backend.app.storage.database import (
+    init_db, get_db, fetch_historical_telemetry, get_active_model_record,
+    record_regional_event, count_consecutive_regional_events,
+)
 from backend.app.auth.security import create_access_token
 from backend.app.main import app
 
@@ -73,7 +76,7 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         """TEST 1: Upload valid AWS-07 CSV -> records stored under AWS-07"""
         csv_lines = ["station_id,timestamp,temperature_c,humidity_pct,pressure_hpa,wind_speed_kmh,rainfall_mm"]
         for i in range(25):
-            csv_lines.append(f"AWS-07,2026-08-01 {i:02d}:00:00,{28.0 + i*0.2},{50.0 + i},{1006.0 + i*0.1},12.0,0.0")
+            csv_lines.append(f"AWS-07,2026-08-0{1 + i // 24} {i % 24:02d}:00:00,{28.0 + i*0.2},{50.0 + i},{1006.0 + i*0.1},12.0,0.0")
         csv_content = "\n".join(csv_lines).encode("utf-8")
 
         response = self.client.post(
@@ -85,7 +88,7 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         data = response.json()
         self.assertTrue(data["success"])
         self.assertEqual(data["station_id"], "AWS-07")
-        self.assertEqual(data["rows_uploaded"], 25)
+        self.assertEqual(data["rows_queued"], 25)
 
         # Verify in DB
         rows = fetch_historical_telemetry("AWS-07")
@@ -95,7 +98,7 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         """TEST 2: Upload valid AWS-08 CSV -> records stored under AWS-08"""
         csv_lines = ["station_id,timestamp,temperature_c,humidity_pct,pressure_hpa,wind_speed_kmh,rainfall_mm"]
         for i in range(25):
-            csv_lines.append(f"AWS-08,2026-08-01 {i:02d}:00:00,{32.0 + i*0.3},{80.0 + i*0.5},{1012.0 - i*0.1},18.0,2.5")
+            csv_lines.append(f"AWS-08,2026-08-0{1 + i // 24} {i % 24:02d}:00:00,{32.0 + i*0.3},{80.0 + i*0.5},{1012.0 - i*0.1},18.0,2.5")
         csv_content = "\n".join(csv_lines).encode("utf-8")
 
         response = self.client.post(
@@ -107,7 +110,7 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         data = response.json()
         self.assertTrue(data["success"])
         self.assertEqual(data["station_id"], "AWS-08")
-        self.assertEqual(data["rows_uploaded"], 25)
+        self.assertEqual(data["rows_queued"], 25)
 
         # Verify strict partition in DB
         rows = fetch_historical_telemetry("AWS-08")
@@ -272,7 +275,7 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         data = response.json()
         self.assertTrue(data["success"])
         # Should have accepted the valid records and handled duplicate safely
-        self.assertGreaterEqual(data["rows_uploaded"], 1)
+        self.assertGreaterEqual(data["rows_queued"], 1)
 
     def test_12_assessment_endpoint_is_station_scoped(self):
         """Persisted assessment evidence is available only to an authorized station."""
@@ -297,6 +300,65 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         self.assertTrue(data["has_assessment"])
         self.assertEqual(data["assessment"]["classification"], "LOCALIZED_ANOMALY")
         self.assertEqual(data["assessment"]["evidence"]["evidence_vector"]["z_ml"], 0.91)
+
+    def test_13_model_promotion_requires_validation_gate(self):
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE model_registry SET metrics = ? WHERE station_id = ? AND model_version = ?", ('{"validation_score":0.84}', "AWS-07", "v1.1"))
+
+        rejected = self.client.post(
+            "/api/v1/stations/AWS-07/models/v1.1/promote",
+            headers=self.headers,
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(get_active_model_record("AWS-07")["model_version"], "v1.0")
+
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE model_registry SET metrics = ? WHERE station_id = ? AND model_version = ?", ('{"validation_score":0.90}', "AWS-07", "v1.1"))
+        accepted = self.client.post(
+            "/api/v1/stations/AWS-07/models/v1.1/promote",
+            headers=self.headers,
+        )
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(get_active_model_record("AWS-07")["model_version"], "v1.1")
+
+    def test_14_regional_event_persistence_counts_distinct_observations(self):
+        station_id = "AWS-REG-PERSIST"
+        t0 = "2099-08-04T10:00:00+00:00"
+        t1 = "2099-08-04T10:01:00+00:00"
+        t2 = "2099-08-04T10:02:00+00:00"
+
+        record_regional_event(station_id, t0, True)
+        record_regional_event(station_id, t0, True)  # replayed source timestamp is idempotent
+        self.assertEqual(count_consecutive_regional_events(station_id, t0), 1)
+        record_regional_event(station_id, t1, True)
+        self.assertEqual(count_consecutive_regional_events(station_id, t1), 2)
+        record_regional_event(station_id, t2, False)
+        self.assertEqual(count_consecutive_regional_events(station_id, t2), 0)
+
+    def test_15_regional_event_consensus_requires_same_direction_peers(self):
+        import datetime
+        from backend.app.services.weather_service import (
+            regional_event_consensus, is_eligible_regional_peer,
+        )
+
+        self.assertTrue(regional_event_consensus(3.0, [2.5, 2.2], 0.6))
+        self.assertFalse(regional_event_consensus(3.0, [2.5, -2.2], 0.6))
+        self.assertFalse(regional_event_consensus(1.0, [2.5, 2.2], 0.6))
+        self.assertFalse(regional_event_consensus(3.0, [2.5, 2.2], 0.2))
+
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        peer = {
+            "qc_flag": "VALID",
+            "readiness": {"tier": "TRAINED"},
+            "ml_model": {"has_model": True, "feature_vector": [2.4]},
+            "source_timestamp": now,
+        }
+        self.assertTrue(is_eligible_regional_peer(peer, now))
+        self.assertFalse(is_eligible_regional_peer({**peer, "qc_flag": "ERRONEOUS"}, now))
+        self.assertFalse(is_eligible_regional_peer({**peer, "readiness": {"tier": "COLD_START"}}, now))
+        self.assertFalse(is_eligible_regional_peer({**peer, "source_timestamp": "2020-01-01T00:00:00+00:00"}, now))
 
 
 if __name__ == "__main__":

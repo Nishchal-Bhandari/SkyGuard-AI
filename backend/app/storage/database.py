@@ -225,6 +225,7 @@ def init_db():
                     username VARCHAR(64) UNIQUE NOT NULL,
                     password_hash VARCHAR(255) NOT NULL,
                     access_key VARCHAR(128) DEFAULT 'sentinel2026',
+                    device_key_hash TEXT,
                     latitude DOUBLE PRECISION NOT NULL,
                     longitude DOUBLE PRECISION NOT NULL,
                     elevation DOUBLE PRECISION DEFAULT 0.0,
@@ -363,7 +364,7 @@ def init_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ingest_audit (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     station_id VARCHAR(32) NOT NULL,
                     device_id VARCHAR(64),
                     user_sub VARCHAR(64),
@@ -373,7 +374,17 @@ def init_db():
                     detail TEXT,
                     timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
-            """)
+                """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS regional_event_history (
+                    id SERIAL PRIMARY KEY,
+                    station_id VARCHAR(32) NOT NULL,
+                    observed_at TIMESTAMPTZ NOT NULL,
+                    is_candidate INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE (station_id, observed_at)
+                );
+                """)
 
             try:
                 cur.execute("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS evidence_data TEXT NOT NULL DEFAULT '{}';")
@@ -459,6 +470,7 @@ def init_db():
                     username TEXT UNIQUE NOT NULL COLLATE NOCASE,
                     password_hash TEXT NOT NULL,
                     access_key TEXT DEFAULT 'sentinel2026',
+                    device_key_hash TEXT,
                     latitude REAL NOT NULL,
                     longitude REAL NOT NULL,
                     elevation REAL DEFAULT 0,
@@ -605,7 +617,17 @@ def init_db():
                     detail TEXT,
                     timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
-            """)
+                """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS regional_event_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    station_id VARCHAR(32) NOT NULL,
+                    observed_at TIMESTAMPTZ NOT NULL,
+                    is_candidate INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE (station_id, observed_at)
+                );
+                """)
 
             try:
                 cur.execute("ALTER TABLE incidents ADD COLUMN evidence_data TEXT NOT NULL DEFAULT '{}';")
@@ -893,6 +915,25 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_health_station_time ON sensor_health(station_id, source_timestamp);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_maintenance_tasks_station ON maintenance_tasks(station_id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_maintenance_audit_station ON maintenance_audit(station_id, id);")
+        if conn.is_postgres:
+            cur.execute("ALTER TABLE stations ADD COLUMN IF NOT EXISTS device_key_hash TEXT;")
+            cur.execute("ALTER TABLE regional_event_history ADD COLUMN IF NOT EXISTS is_candidate INTEGER NOT NULL DEFAULT 0;")
+        else:
+            try:
+                cur.execute("ALTER TABLE stations ADD COLUMN device_key_hash TEXT;")
+            except Exception:
+                pass
+            try:
+                cur.execute("ALTER TABLE regional_event_history ADD COLUMN is_candidate INTEGER NOT NULL DEFAULT 0;")
+            except Exception:
+                pass
+        cur.execute("""
+            DELETE FROM regional_event_history
+            WHERE id NOT IN (
+                SELECT MIN(id) FROM regional_event_history GROUP BY station_id, observed_at
+            )
+        """)
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_regional_event_station_time ON regional_event_history(station_id, observed_at);")
 
         # SQLite trigger is the final guard against accidental raw updates.
         if not conn.is_postgres:
@@ -2138,4 +2179,42 @@ def record_drift_metrics(station_id: str, anomaly_rate: float, score_mean: float
                 INSERT INTO drift_metrics (station_id, anomaly_rate, score_mean, score_std, recorded_at)
                 VALUES (?, ?, ?, ?, ?)
             """, (station_id, anomaly_rate, score_mean, score_std, now_iso))
+
+# -----------------------------------------------------------------------------
+# Regional Event tracking
+# -----------------------------------------------------------------------------
+
+def record_regional_event(station_id: str, observed_at_iso: str, is_candidate: bool) -> None:
+    """Record one source observation for regional-event persistence evaluation."""
+    clean_id = station_id.strip().upper()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO regional_event_history (station_id, observed_at, is_candidate)
+            VALUES (?, ?, ?)
+            ON CONFLICT(station_id, observed_at) DO NOTHING
+        """, (clean_id, observed_at_iso, int(is_candidate)))
+
+def count_consecutive_regional_events(station_id: str, observed_at_iso: str, max_gap_seconds: int = 600) -> int:
+    """Count consecutive candidate source observations ending at ``observed_at_iso``."""
+    clean_id = station_id.strip().upper()
+    current = datetime.datetime.fromisoformat(observed_at_iso.replace("Z", "+00:00"))
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=datetime.timezone.utc)
+    cutoff = (current - datetime.timedelta(seconds=max_gap_seconds)).isoformat()
+    current_iso = current.isoformat()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT observed_at, is_candidate FROM regional_event_history
+            WHERE station_id = ? AND observed_at >= ? AND observed_at <= ?
+            ORDER BY observed_at DESC LIMIT 100
+        """, (clean_id, cutoff, current_iso))
+        rows = cur.fetchall()
+    streak = 0
+    for row in rows:
+        if not bool(row["is_candidate"]):
+            break
+        streak += 1
+    return streak
 

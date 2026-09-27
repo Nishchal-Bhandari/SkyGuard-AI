@@ -95,19 +95,23 @@ class TestSkyGuardAuthSystem(unittest.TestCase):
 
     def test_02_admin_login_success_and_failure(self):
         """Test Admin login with correct and incorrect credentials"""
-        res = login_admin(AdminLoginRequest(username="admin", password="sentinel2026"))
-        self.assertTrue(res.success)
-        self.assertEqual(res.role, "admin")
-        self.assertIsNotNone(res.token)
-        
-        payload = decode_access_token(res.token)
+        from starlette.testclient import TestClient as _TC
+        from backend.app.main import app as _app
+        _client = _TC(_app)
+        res = _client.post("/api/v1/auth/admin/login", json={"username": "admin", "password": "sentinel2026"})
+        data = res.json()
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(data["success"])
+        self.assertEqual(data["role"], "admin")
+        self.assertIsNotNone(data["token"])
+
+        payload = decode_access_token(data["token"])
         self.assertIsNotNone(payload)
         self.assertEqual(payload["role"], "admin")
         self.assertEqual(payload["sub"], "admin")
-        
-        with self.assertRaises(HTTPException) as ctx:
-            login_admin(AdminLoginRequest(username="admin", password="wrongpassword"))
-        self.assertEqual(ctx.exception.status_code, 401)
+
+        bad = _client.post("/api/v1/auth/admin/login", json={"username": "admin", "password": "wrongpassword"})
+        self.assertEqual(bad.status_code, 401)
 
     def test_03_admin_create_station_and_uniqueness(self):
         """Test Station creation by Admin and duplicate prevention"""
@@ -168,34 +172,37 @@ class TestSkyGuardAuthSystem(unittest.TestCase):
 
     def test_04_station_login_and_deactivation(self):
         """Test Station login, token payload, and deactivated state rejection"""
+        from starlette.testclient import TestClient as _TC
+        from backend.app.main import app as _app
+        _c = _TC(_app)
         # Login with auto-seeded preset AWS-07
-        res = login_station(StationLoginRequest(username="operator_hyd", password="sentinel2026"))
-        self.assertTrue(res.success)
-        self.assertEqual(res.role, "station_operator")
-        self.assertEqual(res.user.assignedStationId, "AWS-07")
-        
+        res = _c.post("/api/v1/auth/station/login", json={"username": "operator_hyd", "password": "sentinel2026"})
+        data = res.json()
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(data["success"])
+        self.assertEqual(data["role"], "station_operator")
+        self.assertEqual(data["user"]["assignedStationId"], "AWS-07")
+
         # Login with station_id
-        res2 = login_station(StationLoginRequest(username="AWS-07", password="sentinel2026"))
-        self.assertTrue(res2.success)
-        
+        res2 = _c.post("/api/v1/auth/station/login", json={"username": "AWS-07", "password": "sentinel2026"})
+        self.assertTrue(res2.json()["success"])
+
         # Bad password
-        with self.assertRaises(HTTPException) as ctx:
-            login_station(StationLoginRequest(username="operator_hyd", password="badpassword"))
-        self.assertEqual(ctx.exception.status_code, 401)
-        
+        bad = _c.post("/api/v1/auth/station/login", json={"username": "operator_hyd", "password": "badpassword"})
+        self.assertEqual(bad.status_code, 401)
+
         # Deactivate station
         admin_user = {"sub": "admin", "role": "admin"}
         toggle_station_status("AWS-07", StatusToggleRequest(status="INACTIVE"), admin_user=admin_user)
-        
+
         # Deactivated login rejection
-        with self.assertRaises(HTTPException) as ctx:
-            login_station(StationLoginRequest(username="operator_hyd", password="sentinel2026"))
-        self.assertEqual(ctx.exception.status_code, 403)
-        
+        deactivated = _c.post("/api/v1/auth/station/login", json={"username": "operator_hyd", "password": "sentinel2026"})
+        self.assertEqual(deactivated.status_code, 403)
+
         # Reactivate station
         toggle_station_status("AWS-07", StatusToggleRequest(status="ACTIVE"), admin_user=admin_user)
-        res3 = login_station(StationLoginRequest(username="operator_hyd", password="sentinel2026"))
-        self.assertTrue(res3.success)
+        res3 = _c.post("/api/v1/auth/station/login", json={"username": "operator_hyd", "password": "sentinel2026"})
+        self.assertTrue(res3.json()["success"])
 
     def test_05_station_identity_isolation(self):
         """Test that Station A cannot access Station B's protected data"""
@@ -233,13 +240,15 @@ class TestSkyGuardAuthSystem(unittest.TestCase):
         self.assertTrue(reset_res["success"])
         
         # Old password fails
-        with self.assertRaises(HTTPException) as ctx:
-            login_station(StationLoginRequest(username="operator_shimla", password="securePassword@2026"))
-        self.assertEqual(ctx.exception.status_code, 401)
-        
+        from starlette.testclient import TestClient as _TC
+        from backend.app.main import app as _app
+        _c = _TC(_app)
+        old_res = _c.post("/api/v1/auth/station/login", json={"username": "operator_shimla", "password": "securePassword@2026"})
+        self.assertEqual(old_res.status_code, 401)
+
         # New password succeeds
-        new_login = login_station(StationLoginRequest(username="operator_shimla", password="newResetPass@2026"))
-        self.assertTrue(new_login.success)
+        new_res = _c.post("/api/v1/auth/station/login", json={"username": "operator_shimla", "password": "newResetPass@2026"})
+        self.assertTrue(new_res.json()["success"])
 
     def test_07_admin_update_station_details(self):
         """Test Admin updating station details (name, region, coordinates)"""

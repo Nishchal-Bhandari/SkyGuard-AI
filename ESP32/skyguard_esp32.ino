@@ -21,6 +21,14 @@
 #include <WebServer.h>
 #include <HTTPClient.h>
 #include <math.h>
+#include <string.h>
+
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+#ifndef SKYGUARD_STATION_DEVICE_KEY
+#define SKYGUARD_STATION_DEVICE_KEY ""
+#endif
 
 // ============================================================================
 // 1. CONFIGURATION (Update Wi-Fi credentials & your PC's IP address)
@@ -481,10 +489,16 @@ void dispatchToDestination(const EdgeAIResult& res) {
         return;
     }
 
+    if (strlen(SKYGUARD_STATION_DEVICE_KEY) == 0) {
+        Serial.println("[DISPATCH] Station device key is not configured. Copy secrets.example.h to secrets.h and provision a key.");
+        return;
+    }
+
     totalPacketsSent++;
     HTTPClient http;
     http.begin(DESTINATION_SERVER_URL);
     http.addHeader("Content-Type", "application/json");
+    http.addHeader("X-Station-Key", SKYGUARD_STATION_DEVICE_KEY);
     http.setTimeout(8000);
 
     String payload = serializeEdgeResultJSON(res);

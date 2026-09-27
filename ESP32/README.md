@@ -31,6 +31,17 @@ This folder contains the complete, self-contained **Tier 1 (Edge Node)** impleme
 4. Click **Upload**.
 5. Open the Serial Monitor at **115200 baud**. Note the IP address printed by the ESP32 (e.g., `http://192.168.1.50`).
 
+### Configure the authenticated backend connection
+
+The backend rejects unauthenticated telemetry. Use an admin session to rotate a station-specific device key:
+
+```http
+POST /api/v1/admin/stations/AWS-01/device-key
+Authorization: Bearer <admin JWT>
+```
+
+Copy the returned key into a local `secrets.h` file based on `secrets.example.h`, then compile and flash the firmware. `secrets.h` is ignored by Git; never commit it. Rotating the key invalidates the previous key. The server stores only a password hash, and the device key is scoped to its station.
+
 ---
 
 ### Step 2: Start the PC Test Receiver
