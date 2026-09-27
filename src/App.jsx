@@ -19,6 +19,7 @@ import { StationUpload } from './components/views/StationUpload';
 import { StationDiagnostics } from './components/views/StationDiagnostics';
 import { StationChecklist } from './components/views/StationChecklist';
 import { EdgeSync } from './components/views/EdgeSync';
+import { ESP32LiveMonitor } from './components/views/ESP32LiveMonitor';
 
 export const App = () => {
   const { isAuthenticated } = useAuth();
@@ -57,6 +58,8 @@ export const App = () => {
         return <StationChecklist />;
       case 'edge-sync':
         return <EdgeSync />;
+      case 'esp32-live-monitor':
+        return <ESP32LiveMonitor stationId="AWS-01" />;
       default:
         return <CommandCenter />;
     }

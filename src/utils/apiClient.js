@@ -41,7 +41,8 @@ class ApiClient {
   }
 
   async request(endpoint, options = {}) {
-    const url = `${API_BASE}${endpoint}`;
+    const cleanEndpoint = endpoint.startsWith('/api/v1') ? endpoint.slice(7) : endpoint;
+    const url = `${API_BASE}${cleanEndpoint.startsWith('/') ? '' : '/'}${cleanEndpoint}`;
     const isFormData = options.body instanceof FormData;
     const token = this.getToken();
 
@@ -76,6 +77,26 @@ class ApiClient {
       console.warn(`[ApiClient] Error on ${endpoint}:`, err.message);
       throw err;
     }
+  }
+
+  async get(endpoint, options = {}) {
+    return await this.request(endpoint, { ...options, method: "GET" });
+  }
+
+  async post(endpoint, body, options = {}) {
+    return await this.request(endpoint, {
+      ...options,
+      method: "POST",
+      body: body instanceof FormData ? body : JSON.stringify(body)
+    });
+  }
+
+  async getFleetLiveState() {
+    return await this.request("/stations/fleet/live");
+  }
+
+  async getEsp32Latest(stationId = "AWS-01") {
+    return await this.request(`/telemetry/esp32/latest?station_id=${encodeURIComponent(stationId)}`);
   }
 
   // -------------------------------------------------------------------------

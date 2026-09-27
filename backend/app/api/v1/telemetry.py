@@ -21,6 +21,105 @@ logger = logging.getLogger("skyguard.telemetry")
 router = APIRouter(tags=["Telemetry Ingestion & Stats"])
 
 
+# =============================================================================
+# ESP32 Edge-Node Ingestion & Health Endpoints (no auth required — station uses
+# a shared network endpoint; authentication is by source IP / station_id claim)
+# =============================================================================
+
+@router.get("/telemetry/esp32/health")
+def esp32_health():
+    """
+    Lightweight health-check for the ESP32 edge node.
+    The sensor_simulator.html and ESP32 firmware can ping this to confirm
+    the backend is reachable before streaming telemetry.
+    """
+    return {
+        "status": "ONLINE",
+        "service": "SkyGuard-AI ESP32 Telemetry Ingest",
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "ingest_endpoint": "/api/v1/telemetry/esp32/ingest",
+    }
+
+
+@router.get("/telemetry/esp32/latest")
+def get_esp32_latest_telemetry(station_id: str = "AWS-01"):
+    """
+    Returns the latest real-time frame and cross-tier verification
+    for the ESP32 Live Monitor UI.
+    """
+    st_id = str(station_id).strip().upper()
+    latest = weather_service.esp32_latest.get(st_id)
+    if not latest:
+        # Fallback to current live_state if available
+        latest = weather_service.live_state.get(st_id)
+
+    return {
+        "success": True,
+        "station_id": st_id,
+        "has_data": latest is not None and latest.get("esp32_live", False),
+        "station": latest,
+        "history": weather_service.esp32_history.get(st_id, [])
+    }
+
+
+@router.post("/telemetry/esp32/ingest")
+async def ingest_esp32_telemetry(
+    payload: Dict[str, Any] = Body(...),
+    background_tasks: BackgroundTasks = BackgroundTasks()
+):
+    """
+    Receives a real-time telemetry frame dispatched by the ESP32 edge node.
+
+    Expected JSON body (produced by skyguard_esp32.ino / serializeEdgeResultJSON):
+    {
+        "seq": 42,
+        "device_id": "esp32-aws01-edge",
+        "station_id": "AWS-01",
+        "sensors": {
+            "temperature": {"value": 24.5, "unit": "°C", "wmo_flag": 0},
+            "humidity":    {"value": 65.0,  "unit": "%",  "wmo_flag": 0},
+            "pressure":    {"value": 1013.2,"unit": "hPa","wmo_flag": 0},
+            "battery_v":   {"value": 12.60, "unit": "V"}
+        },
+        "derived": {
+            "dew_point": 17.84,
+            "vapor_pressure_deficit": 8.32,
+            "clausius_clapeyron_pass": true
+        },
+        "edge_ai": {
+            "classification": "NOMINAL",
+            "anomaly_score": 0.02,
+            "reason": "All sensors nominal; thermodynamic checks passed."
+        }
+    }
+
+    The backend runs the full Tier-2 Cloud ML pipeline on the received data and
+    immediately updates the live fleet state for the dashboard.
+    Returns a cross-tier verification result (Edge AI vs Cloud ML).
+    """
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Empty payload. Expected ESP32 telemetry JSON."
+        )
+
+    station_id = str(payload.get("station_id", "AWS-01")).strip().upper()
+    logger.info(f"[ESP32 INGEST] Received frame from station={station_id} device={payload.get('device_id')} seq={payload.get('seq')}")
+
+    try:
+        result = weather_service.process_esp32_frame(payload)
+        return result
+    except Exception as e:
+        logger.error(f"[ESP32 INGEST ERROR] {station_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"ESP32 frame processing failed: {str(e)}"
+        )
+
+
+
+
+
 @router.get("/stations/fleet/live")
 def get_fleet_live_state(
     current_user: Dict[str, Any] = Depends(get_current_user)

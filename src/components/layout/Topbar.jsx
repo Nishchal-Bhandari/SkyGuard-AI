@@ -15,7 +15,8 @@ const VIEW_TITLES = {
   'station-upload': { title: 'HISTORICAL DATA INGESTION', sub: 'BATCH CSV / JSON TELEMETRY LOG UPLOADER & BASELINE BACKFILL' },
   'station-diagnostics': { title: 'HARDWARE TELEMETRY', sub: 'GATEWAY BATTERY, SOLAR CHARGE, RSSI & FIRMWARE STATUS' },
   'station-checklist': { title: 'MAINTENANCE CHECKLIST', sub: 'STEP-BY-STEP FIELD DIAGNOSTICS & AUDIT LOGS' },
-  'edge-sync': { title: 'EDGE RESILIENCE & OFFLINE SYNC', sub: 'LOCAL APPEND-ONLY BUFFER & IDEMPOTENT REPLAY' }
+  'edge-sync': { title: 'EDGE RESILIENCE & OFFLINE SYNC', sub: 'LOCAL APPEND-ONLY BUFFER & IDEMPOTENT REPLAY' },
+  'esp32-live-monitor': { title: 'ESP32 EDGE LIVE MONITOR', sub: 'REAL-TIME TIER-1 EDGE AI vs TIER-2 CLOUD ML CROSS-VERIFICATION — AWS-01' }
 };
 
 export const Topbar = ({ onToggleMobileSidebar }) => {

@@ -816,6 +816,53 @@ def init_db():
         for table_sql in extended_tables:
             cur.execute(table_sql)
 
+        # ---------------------------------------------------------------------
+        # PostgreSQL sequence migration for extended_tables that use
+        # `INTEGER PRIMARY KEY` (SQLite auto-increment syntax).
+        # In Postgres, `INTEGER PRIMARY KEY` does NOT create a sequence, so
+        # inserts that omit `id` produce a NOT NULL violation.
+        # This block idempotently attaches a SERIAL sequence to each table.
+        # ---------------------------------------------------------------------
+        if conn.is_postgres:
+            _serial_tables = [
+                "assessments", "imputations", "sensor_health",
+                "station_climatology", "fusion_coefficients",
+                "shadow_scores", "drift_metrics", "retraining_candidates",
+                "config_audit", "sensor_change_events",
+                "maintenance_tasks", "maintenance_audit",
+            ]
+            for _tbl in _serial_tables:
+                _sp = f"sp_seq_{_tbl}"
+                try:
+                    cur.execute(f"SAVEPOINT {_sp}")
+                    cur.execute(f"""
+                        DO $$
+                        BEGIN
+                            IF NOT EXISTS (
+                                SELECT 1 FROM information_schema.columns
+                                WHERE table_name = '{_tbl}'
+                                  AND column_name = 'id'
+                                  AND column_default LIKE 'nextval%'
+                            ) THEN
+                                CREATE SEQUENCE IF NOT EXISTS {_tbl}_id_seq;
+                                ALTER TABLE {_tbl}
+                                    ALTER COLUMN id SET DEFAULT nextval('{_tbl}_id_seq'::regclass);
+                                PERFORM setval('{_tbl}_id_seq',
+                                    COALESCE((SELECT MAX(id) FROM {_tbl}), 0) + 1, false);
+                            END IF;
+                        END
+                        $$;
+                    """)
+                    cur.execute(f"RELEASE SAVEPOINT {_sp}")
+                except Exception as _seq_err:
+                    # Roll back only this savepoint so the outer transaction stays alive
+                    try:
+                        cur.execute(f"ROLLBACK TO SAVEPOINT {_sp}")
+                        cur.execute(f"RELEASE SAVEPOINT {_sp}")
+                    except Exception:
+                        pass
+                    logger.warning(f"[DB Migration] Could not attach sequence to {_tbl}.id: {_seq_err}")
+
         cur.execute("CREATE INDEX IF NOT EXISTS idx_assessments_station_time ON assessments(station_id, source_timestamp);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_health_station_time ON sensor_health(station_id, source_timestamp);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_maintenance_tasks_station ON maintenance_tasks(station_id);")

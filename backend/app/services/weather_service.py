@@ -114,6 +114,8 @@ class WeatherService:
         self.live_state: Dict[str, Any] = {}
         self.is_running = False
         self._cached_base_readings: Dict[str, Dict[str, Any]] = {}
+        self.esp32_latest: Dict[str, Any] = {}
+        self.esp32_history: Dict[str, List[Dict[str, Any]]] = {}
 
     @staticmethod
     def _temporal_evidence(current: Dict[str, float], previous: Optional[Dict[str, float]]) -> Dict[str, Any]:
@@ -847,7 +849,310 @@ class WeatherService:
             except Exception as e:
                 logger.error(f"[INCIDENT ERROR] {st_id}: {e}", exc_info=True)
 
+        # Preserve active ESP32 edge telemetry so weather poll does not wipe it out
+        for st_id, esp_state in self.esp32_latest.items():
+            new_state[st_id] = esp_state
+
         self.live_state = new_state
+
+    def process_esp32_frame(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Ingest a single real-time telemetry frame dispatched by the ESP32 edge node.
+        Runs the full Tier-2 Cloud ML pipeline and updates live_state for the station.
+        Returns a verification response comparing Edge-AI vs Cloud ML assessments.
+        """
+        station_id = str(payload.get("station_id", "AWS-01")).strip().upper()
+
+        # --- Parse raw sensor values from ESP32 packet ---
+        sensors = payload.get("sensors", {})
+        temp = float(sensors.get("temperature", {}).get("value", 25.0))
+        hum  = float(sensors.get("humidity", {}).get("value", 65.0))
+        pres = float(sensors.get("pressure", {}).get("value", 1013.25))
+        battery = float(sensors.get("battery_v", {}).get("value", 12.6))
+
+        # Edge-AI derived values & WMO flags from the ESP32
+        derived = payload.get("derived", {})
+        edge_ai = payload.get("edge_ai", {})
+        edge_wmo_t = int(sensors.get("temperature", {}).get("wmo_flag", 0))
+        edge_wmo_h = int(sensors.get("humidity", {}).get("wmo_flag", 0))
+        edge_wmo_p = int(sensors.get("pressure", {}).get("wmo_flag", 0))
+        edge_classification = edge_ai.get("classification", "NOMINAL")
+        edge_score = float(edge_ai.get("anomaly_score", 0.02))
+        edge_dew_point = float(derived.get("dew_point", 0.0))
+        edge_vpd = float(derived.get("vapor_pressure_deficit", 0.0))
+        edge_clausius_pass = bool(derived.get("clausius_clapeyron_pass", True))
+        seq = payload.get("seq", 0)
+
+        # --- Fetch station metadata for ML pipeline ---
+        station_meta = {}
+        all_qc_configs = {}
+        all_models = {}
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT * FROM stations WHERE station_id = ?", (station_id,))
+                row = cur.fetchone()
+                if row:
+                    station_meta = dict(row)
+                cur.execute("SELECT * FROM station_qc_config WHERE station_id = ?", (station_id,))
+                qrow = cur.fetchone()
+                if qrow:
+                    all_qc_configs[station_id] = dict(qrow)
+                cur.execute("SELECT * FROM model_registry WHERE station_id = ? AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1", (station_id,))
+                mrow = cur.fetchone()
+                if mrow:
+                    all_models[station_id] = dict(mrow)
+        except Exception as e:
+            logger.error(f"[ESP32 FRAME] DB lookup failed for {station_id}: {e}")
+
+        elev = float(station_meta.get("elevation", 0) or 0)
+        readiness = station_readiness(station_id)
+
+        observation = {"temp": temp, "hum": hum, "pres": pres, "wind": 10.0, "rain": 0.0, "hour": 12}
+        previous_state = self.live_state.get(station_id, {})
+        previous_sensors = previous_state.get("sensors", {})
+        previous_observation = {
+            "temp": previous_sensors.get("temperature", {}).get("value", temp),
+            "hum":  previous_sensors.get("humidity",    {}).get("value", hum),
+            "pres": previous_sensors.get("pressure",    {}).get("value", pres),
+        }
+
+        # --- Tier-2: Run full Cloud ML pipeline ---
+        temporal_evidence = self._temporal_evidence(
+            {"temp": temp, "hum": hum, "pres": pres},
+            previous_observation if previous_state else None
+        )
+        multivariate_evidence = self._multivariate_evidence(temp, hum, pres, 0.0, 10.0)
+
+        thermo_valid, thermo_violations = thermo_engine.validate_thermodynamic_bounds(temp, pres, hum, elev)
+        derived_thermo = thermo_engine.compute_all_thermodynamic_features(temp, pres, hum, elev)
+
+        # WMO flags (cloud tier)
+        wmo_t_flag, wmo_h_flag, wmo_p_flag = 0, 0, 0
+        qc_state = "NORMAL"
+
+        if not thermo_valid or temp < -50 or temp > 60 or hum < 0 or hum > 100 or pres < 800 or pres > 1200:
+            qc_state = "SUSPECT"
+            if temp < -50 or temp > 60:
+                wmo_t_flag = 2
+            if hum < 0 or hum > 100:
+                wmo_h_flag = 2
+            if pres < 800 or pres > 1200:
+                wmo_p_flag = 2
+
+        if battery < 11.0:
+            qc_state = "SUSPECT"
+
+        qc_config = all_qc_configs.get(station_id)
+        if qc_config and qc_state == "NORMAL":
+            t_min = qc_config.get("temperature_normal_min")
+            t_max = qc_config.get("temperature_normal_max")
+            if (t_min is not None and temp < float(t_min) - TEMP_SOFT_MARGIN) or \
+               (t_max is not None and temp > float(t_max) + TEMP_SOFT_MARGIN):
+                qc_state = "SUSPECT"
+                wmo_t_flag = 1
+
+        # ML Scoring
+        ml_result = None
+        try:
+            if all_models.get(station_id) and readiness["tier"] in ["TRAINED", "MATURE"]:
+                ml_result = training_service.score_observation(
+                    station_id=station_id,
+                    observation=observation,
+                    last_observation=previous_observation if previous_state else None
+                )
+        except Exception as e:
+            logger.error(f"[ESP32 ML SCORE] {station_id}: {e}")
+
+        if not ml_result or not isinstance(ml_result, dict):
+            ml_result = {"station_id": station_id, "has_model": False, "is_anomaly": False,
+                         "anomaly_score": None, "status": "UNTRAINED", "xai_explanation": None}
+
+        # Determine cloud-side final status
+        final_status = "NORMAL"
+        if battery < 11.0 or not thermo_valid:
+            final_status = "CRITICAL"
+            wmo_t_flag = max(wmo_t_flag, 1)
+        elif (ml_result.get("is_anomaly")) or qc_state == "SUSPECT":
+            final_status = "ANOMALY"
+            if wmo_t_flag == 0:
+                wmo_t_flag = 1
+
+        # Root-cause diagnosis
+        root_cause_diag = root_cause_classifier.diagnose(
+            observation={"temp": temp, "hum": hum, "pres": pres, "missing": False},
+            last_observation=previous_observation if previous_state else None,
+            spatial_analysis={},
+            thermo_violations=thermo_violations,
+            battery_v=float(battery),
+            signal_dbm=-72.0,
+            ml_is_anomaly=bool(ml_result.get("is_anomaly", False)),
+            ml_score=float(ml_result.get("anomaly_score", 0.0) or 0.0),
+            flatline_flag=False,
+            temporal_evidence=temporal_evidence
+        )
+
+        # Sensor health
+        health_record = sensor_health_engine.evaluate_station_health(
+            station_id=station_id,
+            current_status=final_status,
+            drift_rate_c_per_day=0.0,
+            battery_v=float(battery),
+            signal_dbm=-72.0,
+            flatline_detected=False,
+            qc_envelope_breached=(qc_state == "SUSPECT")
+        )
+
+        # Evidence fusion
+        evidence_vector = {
+            "z_qc":    1.0 if qc_state == "SUSPECT" else 0.0,
+            "z_phys":  1.0 if thermo_violations else 0.0,
+            "z_temp":  1.0 if temporal_evidence.get("spike") or temporal_evidence.get("noise") else 0.0,
+            "z_ml":    float(ml_result.get("anomaly_score") or 0.0),
+            "z_multi": 1.0 if not multivariate_evidence.get("valid") else 0.0,
+            "z_health": round(max(0.0, 1.0 - float(health_record.get("overall_health_score", 100.0)) / 100.0), 3),
+        }
+        fusion_result = fuse_anomaly_evidence(evidence_vector)
+
+        # --- Cross-Tier Verification ---
+        edge_max_wmo = max(edge_wmo_t, edge_wmo_h, edge_wmo_p)
+        cloud_max_wmo = max(wmo_t_flag, wmo_h_flag, wmo_p_flag)
+        tiers_agree = (edge_max_wmo == cloud_max_wmo)
+        discrepancy_reason = None
+        if not tiers_agree:
+            discrepancy_reason = (
+                f"Edge flagged WMO-{edge_max_wmo} ({edge_classification}), "
+                f"Cloud-ML flagged WMO-{cloud_max_wmo} ({final_status})."
+            )
+
+        # --- Build full live state entry (same schema as reevaluate) ---
+        cloud_state = {
+            "station_id": station_id,
+            "station_name": station_meta.get("station_name", station_id),
+            "region": station_meta.get("region", "Edge"),
+            "elevation": elev,
+            "latitude": float(station_meta.get("latitude", 0.0)),
+            "longitude": float(station_meta.get("longitude", 0.0)),
+            "status": final_status,
+            "battery": battery,
+            "signal": -72.0,
+            "last_seen": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "esp32_live": True,
+            "esp32_seq": seq,
+            "sensors": {
+                "temperature": {"value": round(temp, 1), "unit": "°C",   "wmo_flag": wmo_t_flag, "status": "FLAG_GOOD" if wmo_t_flag == 0 else ("FLAG_SUSPECT" if wmo_t_flag == 1 else "FLAG_ERRONEOUS")},
+                "humidity":    {"value": round(hum,  1), "unit": "%",    "wmo_flag": wmo_h_flag, "status": "FLAG_GOOD" if wmo_h_flag == 0 else ("FLAG_SUSPECT" if wmo_h_flag == 1 else "FLAG_ERRONEOUS")},
+                "pressure":    {"value": round(pres, 1), "unit": "hPa",  "wmo_flag": wmo_p_flag, "status": "FLAG_GOOD" if wmo_p_flag == 0 else ("FLAG_SUSPECT" if wmo_p_flag == 1 else "FLAG_ERRONEOUS")},
+                "wind_speed":  {"value": 10.0, "unit": "km/h", "wmo_flag": 0},
+                "rainfall":    {"value": 0.0,  "unit": "mm",   "wmo_flag": 0},
+                "battery_v":   {"value": round(battery, 2), "unit": "V"},
+            },
+            "derived_thermodynamics": derived_thermo,
+            "thermodynamic_violations": thermo_violations,
+            "ml_model": ml_result,
+            "has_active_fault": False,
+            "fault_details": None,
+            "drift_rate": 0.0,
+            "is_flatline": False,
+            "spatial_data": {},
+            "readiness": readiness,
+            "temporal_evidence": temporal_evidence,
+            "multivariate_evidence": multivariate_evidence,
+            "root_cause_diagnosis": root_cause_diag,
+            "sensor_health": health_record,
+            "final_assessment": {
+                "classification": final_status,
+                "root_cause": root_cause_diag.get("root_cause"),
+                "confidence": "HIGH" if fusion_result["score"] >= 0.75 else ("MEDIUM" if fusion_result["score"] >= 0.4 else "LOW"),
+                "evidence_completeness": round(0.5 + (0.25 if ml_result.get("has_model") else 0.0), 2),
+                "readiness": readiness,
+                "evidence_vector": evidence_vector,
+                "interpretation": root_cause_diag.get("specific_reason", "Edge node telemetry processed."),
+                "badge_class": "badge-critical" if final_status in ["CRITICAL", "ANOMALY"] else "badge-normal",
+                "xai_summary": ml_result.get("xai_explanation", {}).get("explanation_text") if ml_result.get("xai_explanation") else None,
+                "fusion": fusion_result,
+                "quality_state": "VALID" if final_status == "NORMAL" else ("INVALID" if final_status == "CRITICAL" else "SUSPECT"),
+                "severity": "CRITICAL" if final_status == "CRITICAL" else ("HIGH" if final_status == "ANOMALY" else "NONE"),
+                "anomaly_score": ml_result.get("anomaly_score"),
+            },
+            # ESP32 edge AI results for cross-tier comparison
+            "edge_ai": {
+                "seq": seq,
+                "classification": edge_classification,
+                "anomaly_score": edge_score,
+                "wmo_t_flag": edge_wmo_t,
+                "wmo_h_flag": edge_wmo_h,
+                "wmo_p_flag": edge_wmo_p,
+                "dew_point": edge_dew_point,
+                "vapor_pressure_deficit": edge_vpd,
+                "clausius_clapeyron_pass": edge_clausius_pass,
+                "reason": edge_ai.get("reason", ""),
+            },
+            "cross_tier_verification": {
+                "tiers_agree": tiers_agree,
+                "edge_wmo_max": edge_max_wmo,
+                "cloud_wmo_max": cloud_max_wmo,
+                "discrepancy_reason": discrepancy_reason,
+                "verdict": "VERIFIED" if tiers_agree else "DISCREPANCY_DETECTED",
+            }
+        }
+
+        # Update live state and dedicated ESP32 buffers so dashboard picks it up immediately
+        self.esp32_latest[station_id] = cloud_state
+        if station_id not in self.esp32_history:
+            self.esp32_history[station_id] = []
+        self.esp32_history[station_id].insert(0, cloud_state)
+        self.esp32_history[station_id] = self.esp32_history[station_id][:30]
+
+        self.live_state[station_id] = cloud_state
+
+        # --- Persist to database ---
+        try:
+            from backend.app.storage.database import insert_telemetry_batch
+            ts_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            insert_telemetry_batch(station_id, [{
+                "timestamp": ts_now,
+                "temp": temp,
+                "hum": hum,
+                "pres": pres,
+                "wind": 10.0,
+                "rain": 0.0,
+                "battery": battery,
+                "signal": -72.0,
+                "qc_flag": "VALID" if final_status == "NORMAL" else ("ERRONEOUS" if final_status == "CRITICAL" else "SUSPECT"),
+                "raw_payload": {
+                    "source": "esp32_edge",
+                    "seq": seq,
+                    "edge_classification": edge_classification,
+                    "edge_score": edge_score,
+                    "cross_tier_verdict": "VERIFIED" if tiers_agree else "DISCREPANCY_DETECTED",
+                }
+            }])
+        except Exception as e:
+            logger.warning(f"[ESP32 PERSIST] Could not persist telemetry for {station_id}: {e}")
+
+        logger.info(
+            f"[ESP32 INGEST] {station_id} seq={seq} | EdgeAI={edge_classification} | CloudML={final_status} | "
+            f"{'VERIFIED ✓' if tiers_agree else 'DISCREPANCY ⚠ ' + str(discrepancy_reason)}"
+        )
+
+        return {
+            "success": True,
+            "station_id": station_id,
+            "seq": seq,
+            "cloud_ml": {
+                "status": final_status,
+                "wmo_t_flag": wmo_t_flag,
+                "wmo_h_flag": wmo_h_flag,
+                "wmo_p_flag": wmo_p_flag,
+                "root_cause": root_cause_diag.get("root_cause"),
+                "anomaly_score": ml_result.get("anomaly_score"),
+                "fusion_score": fusion_result["score"],
+                "thermo_violations": thermo_violations,
+            },
+            "edge_ai": cloud_state["edge_ai"],
+            "cross_tier_verification": cloud_state["cross_tier_verification"],
+        }
 
     def get_fleet_state(self) -> List[Dict[str, Any]]:
         if not self.live_state:

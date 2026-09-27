@@ -310,12 +310,20 @@ export const StationUpload = () => {
             ? statusRes.completed_stages
             : (typeof statusRes.completed_stages === 'string' ? JSON.parse(statusRes.completed_stages || '[]') : []);
 
+          // Always normalize COMPLETED state so stage never reads stale 'Data Ingested'
+          const resolvedStage = jobStatus === "COMPLETED"
+            ? "Model Activated"
+            : statusRes.current_stage;
+          const resolvedCompleted = jobStatus === "COMPLETED" && completed.length < 8
+            ? ["Data Ingested","Data Validated","Data Preprocessed","Features Generated","Training Isolation Forest","Model Evaluation","Model Registered","Model Activated"]
+            : completed;
+
           setActiveJobState({
             job_id: statusRes.job_id || jobId,
             status: jobStatus,
-            current_stage: statusRes.current_stage,
-            completed_stages: completed,
-            progress: statusRes.progress,
+            current_stage: resolvedStage,
+            completed_stages: resolvedCompleted,
+            progress: jobStatus === "COMPLETED" ? 100 : statusRes.progress,
             error_message: statusRes.error_message
           });
 
@@ -323,18 +331,18 @@ export const StationUpload = () => {
             setPipelineState('COMPLETED');
             tacticalAudio.playSuccess();
 
-            try {
-              const activeRes = await apiClient.getStationActiveModel(stationId);
-              if (activeRes && activeRes.success && activeRes.has_active_model) {
-                setTrainedResult(activeRes.model_card);
-              }
-            } catch (err) {
-              console.warn("Failed to fetch active model for completed job:", err);
-            }
+            // Fetch active model card asynchronously — don't block the UI transition
+            apiClient.getStationActiveModel(stationId)
+              .then(activeRes => {
+                if (activeRes && activeRes.success && activeRes.has_active_model) {
+                  setTrainedResult(activeRes.model_card);
+                }
+              })
+              .catch(err => console.warn("Failed to fetch active model for completed job:", err));
 
-            await refreshStationStats(stationId);
+            refreshStationStats(stationId).catch(() => {});
             if (refreshActiveStationModel) {
-              await refreshActiveStationModel(stationId);
+              refreshActiveStationModel(stationId).catch(() => {});
             }
             break; // Stop polling on backend completion
           }
@@ -643,14 +651,17 @@ export const StationUpload = () => {
           )}
 
           {/* Success Result Certificate */}
-          {pipelineState === 'COMPLETED' && trainedResult && (
+          {pipelineState === 'COMPLETED' && (
             <div style={{ background: 'rgba(0,255,102,0.06)', border: '1px solid var(--neon-green)', borderRadius: '6px', padding: '14px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
               <div>
                 <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '0.95rem', fontWeight: 800, color: 'var(--neon-green)' }}>
-                  <i className="fa-solid fa-shield-check"></i> SUCCESS — {trainedResult.station_id} MODEL {trainedResult.version || "ACTIVE"} TRAINED & ACTIVATED
+                  <i className="fa-solid fa-shield-check"></i> SUCCESS — {trainedResult ? `${trainedResult.station_id} MODEL ${trainedResult.version || 'ACTIVE'}` : activeStationId} TRAINED & ACTIVATED
                 </div>
                 <div style={{ fontSize: '0.74rem', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  {trainedResult.training_summary?.valid_records || availableHistoricalCount} historical records processed | 8 features generated | Dynamic Threshold: <strong style={{ color: 'var(--neon-cyan)' }}>{trainedResult.training_summary?.dynamic_threshold || trainedResult.threshold}</strong> | Model ID: <strong style={{ color: 'var(--neon-cyan)' }}>{trainedResult.model_id}</strong>
+                  {trainedResult
+                    ? <>{trainedResult.training_summary?.valid_records || availableHistoricalCount} historical records processed | 8 features generated | Dynamic Threshold: <strong style={{ color: 'var(--neon-cyan)' }}>{trainedResult.training_summary?.dynamic_threshold || trainedResult.threshold}</strong> | Model ID: <strong style={{ color: 'var(--neon-cyan)' }}>{trainedResult.model_id}</strong></>
+                    : <span style={{ color: 'var(--neon-cyan)' }}>Activating model — fetching model card...</span>
+                  }
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>

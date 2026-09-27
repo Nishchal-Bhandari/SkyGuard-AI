@@ -192,6 +192,16 @@ export const Sidebar = ({ collapsed, setCollapsed }) => {
               <span>Edge Buffer & Sync</span>
               {offlineBuffer.length > 0 && <span className="nav-badge">{offlineBuffer.length}</span>}
             </a>
+            <a
+              className={`nav-item ${currentView === 'esp32-live-monitor' ? 'active' : ''}`}
+              data-view="esp32-live-monitor"
+              onClick={() => handleNavClick('esp32-live-monitor')}
+              title="ESP32 Live Monitor"
+            >
+              <i className="fa-solid fa-microchip"></i>
+              <span>ESP32 Live Monitor</span>
+              <span className="nav-badge" style={{ background: 'rgba(0,255,102,0.15)', color: 'var(--neon-green)', borderColor: 'var(--neon-green)' }}>LIVE</span>
+            </a>
 
             <div className="nav-section-title">Station Triage & Health</div>
             <a

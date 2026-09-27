@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Weather Station Sensor Console // AWS-01</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+
+  <style>
+    :root {
+      /* Authentic Industrial Weather Station Palette */
+      --bg-base: #11141a;
+      --bg-station: #1a1f29;
+      --bg-sensor: #222937;
+      --bg-input: #151a23;
+      --border-module: #333c4d;
+      --border-accent: #48566e;
+
+      /* Weather Instrumentation Indicator Colors */
+      --led-green: #10b981;
+      --led-amber: #f59e0b;
+      --led-red: #ef4444;
+      --accent-temp: #f97316;
+      --accent-hum: #06b6d4;
+      --accent-pres: #8b5cf6;
+      --accent-batt: #eab308;
+
+      --text-bright: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+
+      --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-data: 'IBM Plex Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-bright);
+      font-family: var(--font-body);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 28px 16px 40px;
+    }
+
+    .station-chassis {
+      width: 100%;
+      max-width: 900px;
+      background: var(--bg-station);
+      border: 2px solid var(--border-module);
+      border-radius: 12px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      overflow: hidden;
+    }
+
+    /* Weather Station Identification Top Bar */
+    .station-mast-head {
+      background: #141822;
+      border-bottom: 2px solid var(--border-module);
+      padding: 16px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .station-title-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .station-icon {
+      width: 42px;
+      height: 42px;
+      background: #1e2638;
+      border: 1px solid var(--border-accent);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      color: var(--accent-hum);
+    }
+
+    .station-name {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: #fff;
+    }
+
+    .station-sub {
+      font-family: var(--font-data);
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Connection Settings Bar */
+    .connection-strip {
+      background: #181d27;
+      border-bottom: 1px solid var(--border-module);
+      padding: 12px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .conn-field {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 220px;
+    }
+
+    .conn-label {
+      font-family: var(--font-data);
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .conn-input {
+      background: var(--bg-input);
+      border: 1px solid var(--border-module);
+      border-radius: 6px;
+      color: #fff;
+      font-family: var(--font-data);
+      font-size: 0.82rem;
+      padding: 6px 10px;
+      width: 100%;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .conn-input:focus {
+      border-color: var(--accent-hum);
+    }
+
+    .btn-ping {
+      background: #232c3d;
+      border: 1px solid var(--border-accent);
+      color: #fff;
+      font-family: var(--font-data);
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 7px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s;
+    }
+
+    .btn-ping:hover {
+      background: #2d384e;
+    }
+
+    .status-badge {
+      font-family: var(--font-data);
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 5px 10px;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-badge.online {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid var(--led-green);
+      color: var(--led-green);
+    }
+
+    .status-badge.offline {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid var(--led-red);
+      color: var(--led-red);
+    }
+
+    .status-badge.checking {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid var(--led-amber);
+      color: var(--led-amber);
+    }
+
+    .indicator-led {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    /* ========================================================================
+       SENSOR MODULES GRID
+       ======================================================================== */
+    .sensors-grid {
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    @media (max-width: 720px) {
+      .sensors-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Individual Hardware Sensor Module Card */
+    .sensor-module {
+      background: var(--bg-sensor);
+      border: 1px solid var(--border-module);
+      border-radius: 8px;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      transition: border-color 0.2s;
+    }
+
+    .sensor-module:hover {
+      border-color: var(--border-accent);
+    }
+
+    .sensor-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .sensor-tag-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .sensor-type-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+    }
+
+    .icon-temp { background: rgba(249, 115, 22, 0.15); color: var(--accent-temp); }
+    .icon-hum { background: rgba(6, 182, 212, 0.15); color: var(--accent-hum); }
+    .icon-pres { background: rgba(139, 92, 246, 0.15); color: var(--accent-pres); }
+    .icon-batt { background: rgba(234, 179, 8, 0.15); color: var(--accent-batt); }
+
+    .sensor-titles {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sensor-name {
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .sensor-spec {
+      font-family: var(--font-data);
+      font-size: 0.68rem;
+      color: var(--text-dim);
+    }
+
+    .sensor-range-pill {
+      font-family: var(--font-data);
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      background: var(--bg-input);
+      border: 1px solid var(--border-module);
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+
+    /* Sensor Value Display & Direct Input */
+    .sensor-value-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-module);
+      border-radius: 6px;
+      padding: 10px 14px;
+    }
+
+    .value-display {
+      font-family: var(--font-data);
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1;
+    }
+
+    .value-unit {
+      font-family: var(--font-data);
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      margin-left: 4px;
+      font-weight: 500;
+    }
+
+    .sensor-num-input {
+      background: #1e2430;
+      border: 1px solid var(--border-accent);
+      border-radius: 4px;
+      color: #fff;
+      font-family: var(--font-data);
+      font-size: 0.95rem;
+      font-weight: 600;
+      width: 90px;
+      padding: 6px 8px;
+      text-align: right;
+      outline: none;
+    }
+
+    .sensor-num-input:focus {
+      border-color: var(--accent-hum);
+    }
+
+    /* Range Slider */
+    .slider-track {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    input[type=range] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 6px;
+      background: #181d27;
+      border-radius: 3px;
+      outline: none;
+    }
+
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #e2e8f0;
+      cursor: pointer;
+      border: 2px solid var(--border-module);
+      transition: background 0.15s;
+    }
+
+    input[type=range]::-webkit-slider-thumb:hover {
+      background: #38bdf8;
+    }
+
+    /* ========================================================================
+       DISPATCH ACTION FOOTER & ESP32 RESPONSE DISPLAY
+       ======================================================================== */
+    .station-footer {
+      background: #141822;
+      border-top: 2px solid var(--border-module);
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .action-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn-send-main {
+      flex: 1;
+      min-width: 240px;
+      background: #2563eb;
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-family: var(--font-body);
+      font-size: 0.95rem;
+      font-weight: 700;
+      padding: 14px 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    .btn-send-main:hover {
+      background: #1d4ed8;
+    }
+
+    .btn-send-main:active {
+      transform: scale(0.99);
+    }
+
+    .btn-auto {
+      background: #1e2636;
+      border: 1px solid var(--border-accent);
+      border-radius: 8px;
+      color: var(--text-bright);
+      font-family: var(--font-data);
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 14px 18px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+    }
+
+    .btn-auto:hover {
+      background: #263146;
+    }
+
+    .btn-auto.active {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: var(--led-red);
+      color: var(--led-red);
+    }
+
+    /* ESP32 Feedback Receipt */
+    .response-card {
+      background: var(--bg-input);
+      border: 1px solid var(--border-module);
+      border-radius: 8px;
+      padding: 14px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .response-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--font-data);
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    .response-body {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .decision-badge {
+      font-family: var(--font-data);
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--led-green);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .decision-badge.anomaly {
+      color: var(--led-red);
+    }
+
+    .decision-reason {
+      font-family: var(--font-data);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .dispatch-info {
+      font-family: var(--font-data);
+      font-size: 0.72rem;
+      color: var(--text-dim);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="station-chassis">
+
+    <!-- 1. Header: Weather Station Unit Identity -->
+    <header class="station-mast-head">
+      <div class="station-title-group">
+        <div class="station-icon">
+          <i class="fa-solid fa-cloud-sun"></i>
+        </div>
+        <div>
+          <div class="station-name">WEATHER STATION SENSOR CONSOLE</div>
+          <div class="station-sub">AWS-01 // TIER-1 SENSOR TRANSDUCER EMULATOR</div>
+        </div>
+      </div>
+      <div style="font-family: var(--font-data); font-size: 0.75rem; color: var(--text-dim);">
+        <i class="fa-solid fa-microchip"></i> ESP32 EDGE NODE INTERFACE
+      </div>
+    </header>
+
+    <!-- 2. Connection Settings -->
+    <div class="connection-strip">
+      <div class="conn-field">
+        <span class="conn-label"><i class="fa-solid fa-wifi"></i> ESP32 IP:</span>
+        <input type="text" id="esp32Host" class="conn-input" value="http://10.86.189.157" placeholder="http://10.86.189.157">
+      </div>
+      <button class="btn-ping" onclick="pingNode()">
+        <i class="fa-solid fa-signal"></i> Ping
+      </button>
+      <div id="connStatus" class="status-badge checking">
+        <span class="indicator-led"></span> <span id="statusText">STANDBY</span>
+      </div>
+
+      <div class="conn-field" style="margin-left: auto;">
+        <span class="conn-label"><i class="fa-solid fa-server"></i> PC Receiver:</span>
+        <input type="text" id="pcTarget" class="conn-input" value="http://10.86.189.68:8000/api/v1/telemetry/esp32/ingest">
+      </div>
+    </div>
+
+    <!-- 3. The 4 Weather Station Sensor Modules -->
+    <div class="sensors-grid">
+
+      <!-- Sensor 1: Temperature Sensor Probe -->
+      <div class="sensor-module">
+        <div class="sensor-header">
+          <div class="sensor-tag-group">
+            <div class="sensor-type-icon icon-temp">
+              <i class="fa-solid fa-temperature-half"></i>
+            </div>
+            <div class="sensor-titles">
+              <span class="sensor-name">Temperature Sensor</span>
+              <span class="sensor-spec">PROBE MODEL: PT-100 RTD</span>
+            </div>
+          </div>
+          <span class="sensor-range-pill">-40 to +60 °C</span>
+        </div>
+
+        <div class="sensor-value-row">
+          <div>
+            <span class="value-display" id="valTemp">24.5</span>
+            <span class="value-unit">°C</span>
+          </div>
+          <input type="number" id="numTemp" class="sensor-num-input" value="24.5" step="0.1"
+                 oninput="syncInput('temp', this.value)">
+        </div>
+
+        <div class="slider-track">
+          <input type="range" id="sliderTemp" min="-40" max="60" step="0.1" value="24.5"
+                 oninput="syncInput('temp', this.value)">
+        </div>
+      </div>
+
+      <!-- Sensor 2: Relative Humidity Sensor -->
+      <div class="sensor-module">
+        <div class="sensor-header">
+          <div class="sensor-tag-group">
+            <div class="sensor-type-icon icon-hum">
+              <i class="fa-solid fa-droplet"></i>
+            </div>
+            <div class="sensor-titles">
+              <span class="sensor-name">Humidity Sensor</span>
+              <span class="sensor-spec">PROBE MODEL: SHT-35 CAPACITIVE</span>
+            </div>
+          </div>
+          <span class="sensor-range-pill">0 to 100 %</span>
+        </div>
+
+        <div class="sensor-value-row">
+          <div>
+            <span class="value-display" id="valHum">65.0</span>
+            <span class="value-unit">% RH</span>
+          </div>
+          <input type="number" id="numHum" class="sensor-num-input" value="65.0" step="0.5"
+                 oninput="syncInput('hum', this.value)">
+        </div>
+
+        <div class="slider-track">
+          <input type="range" id="sliderHum" min="0" max="100" step="0.5" value="65.0"
+                 oninput="syncInput('hum', this.value)">
+        </div>
+      </div>
+
+      <!-- Sensor 3: Barometric Pressure Transducer -->
+      <div class="sensor-module">
+        <div class="sensor-header">
+          <div class="sensor-tag-group">
+            <div class="sensor-type-icon icon-pres">
+              <i class="fa-solid fa-gauge-high"></i>
+            </div>
+            <div class="sensor-titles">
+              <span class="sensor-name">Barometric Pressure</span>
+              <span class="sensor-spec">PROBE MODEL: BMP-388 PIEZO</span>
+            </div>
+          </div>
+          <span class="sensor-range-pill">800 to 1100 hPa</span>
+        </div>
+
+        <div class="sensor-value-row">
+          <div>
+            <span class="value-display" id="valPres">1013.2</span>
+            <span class="value-unit">hPa</span>
+          </div>
+          <input type="number" id="numPres" class="sensor-num-input" value="1013.2" step="0.2"
+                 oninput="syncInput('pres', this.value)">
+        </div>
+
+        <div class="slider-track">
+          <input type="range" id="sliderPres" min="800" max="1100" step="0.2" value="1013.2"
+                 oninput="syncInput('pres', this.value)">
+        </div>
+      </div>
+
+      <!-- Sensor 4: Station Power / Battery Monitor -->
+      <div class="sensor-module">
+        <div class="sensor-header">
+          <div class="sensor-tag-group">
+            <div class="sensor-type-icon icon-batt">
+              <i class="fa-solid fa-car-battery"></i>
+            </div>
+            <div class="sensor-titles">
+              <span class="sensor-name">Station Battery Bus</span>
+              <span class="sensor-spec">12V DC SOLAR POWER PACK</span>
+            </div>
+          </div>
+          <span class="sensor-range-pill">9.0 to 14.5 V</span>
+        </div>
+
+        <div class="sensor-value-row">
+          <div>
+            <span class="value-display" id="valBatt">12.60</span>
+            <span class="value-unit">V</span>
+          </div>
+          <input type="number" id="numBatt" class="sensor-num-input" value="12.60" step="0.05"
+                 oninput="syncInput('batt', this.value)">
+        </div>
+
+        <div class="slider-track">
+          <input type="range" id="sliderBatt" min="9.0" max="14.5" step="0.05" value="12.60"
+                 oninput="syncInput('batt', this.value)">
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 4. Footer: Send to ESP32 & Response Display -->
+    <footer class="station-footer">
+      <div class="action-row">
+        <button class="btn-send-main" id="btnSend" onclick="sendSensorData()">
+          <i class="fa-solid fa-paper-plane"></i> TRANSMIT SENSOR VALUES TO ESP32
+        </button>
+        <button class="btn-auto" id="btnAuto" onclick="toggleAuto()">
+          <i class="fa-solid fa-play"></i> Auto-Transmit (2s)
+        </button>
+      </div>
+
+      <!-- Live ESP32 Edge Decision Banner -->
+      <div class="response-card" id="responseCard">
+        <div class="response-header">
+          <span>ESP32 EDGE AI RESPONSE</span>
+          <span id="respSeq">Awaiting Transmission</span>
+        </div>
+        <div class="response-body">
+          <div class="decision-badge" id="respDecision">
+            <i class="fa-solid fa-circle-check"></i> READY
+          </div>
+          <div class="decision-reason" id="respReason">
+            Adjust the sensor inputs above and click Transmit to run Edge AI on the ESP32.
+          </div>
+          <div class="dispatch-info" id="respDispatch">
+            Target: test_receiver.py (Port 5000)
+          </div>
+        </div>
+      </div>
+    </footer>
+
+  </div>
+
+  <script>
+    // Current sensor values
+    const sensors = {
+      temp: 24.5,
+      hum: 65.0,
+      pres: 1013.2,
+      batt: 12.60
+    };
+
+    let autoTimer = null;
+    let isAuto = false;
+
+    // Synchronize slider and number input
+    function syncInput(name, value) {
+      const num = parseFloat(value);
+      sensors[name] = num;
+
+      if (name === 'temp') {
+        document.getElementById('valTemp').innerText = num.toFixed(1);
+        document.getElementById('numTemp').value = num.toFixed(1);
+        document.getElementById('sliderTemp').value = num;
+      } else if (name === 'hum') {
+        document.getElementById('valHum').innerText = num.toFixed(1);
+        document.getElementById('numHum').value = num.toFixed(1);
+        document.getElementById('sliderHum').value = num;
+      } else if (name === 'pres') {
+        document.getElementById('valPres').innerText = num.toFixed(1);
+        document.getElementById('numPres').value = num.toFixed(1);
+        document.getElementById('sliderPres').value = num;
+      } else if (name === 'batt') {
+        document.getElementById('valBatt').innerText = num.toFixed(2);
+        document.getElementById('numBatt').value = num.toFixed(2);
+        document.getElementById('sliderBatt').value = num;
+      }
+    }
+
+    function getHost() {
+      let host = document.getElementById('esp32Host').value.trim();
+      if (!host.startsWith('http://') && !host.startsWith('https://')) {
+        host = 'http://' + host;
+      }
+      return host.replace(/\/+$/, '');
+    }
+
+    // Ping ESP32 to check online status
+    async function pingNode() {
+      const host = getHost();
+      const badge = document.getElementById('connStatus');
+      const text = document.getElementById('statusText');
+
+      badge.className = 'status-badge checking';
+      text.innerText = 'PINGING...';
+
+      try {
+        const resp = await fetch(`${host}/api/status`, { method: 'GET', mode: 'cors' });
+        if (resp.ok) {
+          badge.className = 'status-badge online';
+          text.innerText = 'ONLINE';
+          const data = await resp.json();
+          displayResponse(data, 200);
+        } else {
+          badge.className = 'status-badge offline';
+          text.innerText = `HTTP ${resp.status}`;
+        }
+      } catch (e) {
+        badge.className = 'status-badge offline';
+        text.innerText = 'OFFLINE';
+      }
+    }
+
+    // Send sensor values to ESP32
+    async function sendSensorData() {
+      const host = getHost();
+      const pcTarget = document.getElementById('pcTarget').value.trim();
+
+      const payload = {
+        temperature: sensors.temp,
+        humidity: sensors.hum,
+        pressure: sensors.pres,
+        battery_v: sensors.batt,
+        destination_url: pcTarget
+      };
+
+      const btn = document.getElementById('btnSend');
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> TRANSMITTING...';
+
+      try {
+        const resp = await fetch(`${host}/api/sensor-input`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> TRANSMIT SENSOR VALUES TO ESP32';
+
+        if (resp.ok) {
+          const result = await resp.json();
+          displayResponse(result, resp.status);
+        } else {
+          document.getElementById('respDecision').innerHTML = `<i class="fa-solid fa-circle-exclamation"></i> ERROR HTTP ${resp.status}`;
+          document.getElementById('respDecision').className = 'decision-badge anomaly';
+          document.getElementById('respReason').innerText = 'ESP32 responded with error status.';
+        }
+      } catch (err) {
+        btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> TRANSMIT SENSOR VALUES TO ESP32';
+        document.getElementById('respDecision').innerHTML = '<i class="fa-solid fa-circle-xmark"></i> FAILED';
+        document.getElementById('respDecision').className = 'decision-badge anomaly';
+        document.getElementById('respReason').innerText = `Could not reach ESP32 at ${host}: ${err.message}`;
+      }
+    }
+
+    // Display the Edge AI evaluation result from the ESP32
+    function displayResponse(data, status) {
+      if (!data) return;
+
+      const edge = data.edge_ai || {};
+      const classification = edge.classification || 'NOMINAL';
+      const reason = edge.reason || 'All values nominal.';
+      const seq = data.seq || 0;
+      const dispatch = data.dispatch_stats || {};
+
+      document.getElementById('respSeq').innerText = `Packet #${seq} Evaluated`;
+
+      const decEl = document.getElementById('respDecision');
+      if (classification === 'NOMINAL') {
+        decEl.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${classification}`;
+        decEl.className = 'decision-badge';
+      } else {
+        decEl.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${classification}`;
+        decEl.className = 'decision-badge anomaly';
+      }
+
+      document.getElementById('respReason').innerText = reason;
+      document.getElementById('respDispatch').innerText = `PC Relay: ${dispatch.last_server_status || 'Sent'} (Total: ${dispatch.successful || 0}/${dispatch.total_sent || 0})`;
+    }
+
+    // Toggle 2-second stream
+    function toggleAuto() {
+      const btn = document.getElementById('btnAuto');
+      if (!isAuto) {
+        isAuto = true;
+        btn.classList.add('active');
+        btn.innerHTML = '<i class="fa-solid fa-stop"></i> Stop Stream';
+        sendSensorData();
+        autoTimer = setInterval(sendSensorData, 2000);
+      } else {
+        isAuto = false;
+        btn.classList.remove('active');
+        btn.innerHTML = '<i class="fa-solid fa-play"></i> Auto-Transmit (2s)';
+        clearInterval(autoTimer);
+      }
+    }
+
+    // Ping on load
+    window.addEventListener('DOMContentLoaded', () => {
+      setTimeout(pingNode, 400);
+    });
+  </script>
+</body>
+</html>
