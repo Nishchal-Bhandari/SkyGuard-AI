@@ -2,7 +2,7 @@ import io
 import csv
 import json
 import datetime
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, status, Body, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, status, Body, BackgroundTasks, Request
 from typing import Optional, Dict, Any, List
 
 from backend.app.storage.database import (
@@ -12,11 +12,39 @@ from backend.app.storage.database import (
     list_assessments,
     calibrate_station_qc,
 )
+from backend.app.storage.database import get_db
 from backend.app.api.v1.auth import get_current_user, require_station_access
 from backend.app.services.weather_service import weather_service
 
 import logging
 logger = logging.getLogger("skyguard.telemetry")
+
+# Simple in-memory rate limiter for ingestion endpoints
+INGEST_RATE_LIMIT: dict[str, list[float]] = {}
+RATE_LIMIT_MAX = 100  # max requests per window
+RATE_LIMIT_WINDOW = 60  # seconds
+
+def enforce_rate_limit(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Raise HTTPException if the client exceeds the allowed request rate."""
+    key = request.client.host if request.client else "unknown"
+    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    timestamps = INGEST_RATE_LIMIT.get(key, [])
+    # Discard timestamps older than the window
+    timestamps = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
+    if len(timestamps) >= RATE_LIMIT_MAX:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded for ingestion endpoint.")
+    timestamps.append(now)
+    INGEST_RATE_LIMIT[key] = timestamps
+
+def log_ingest_audit(station_id: str, device_id: Optional[str], user: Dict[str, Any], client_ip: str, success: bool, detail: str):
+    """Record an audit entry for each ESP32 ingest request."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO ingest_audit (station_id, device_id, user_sub, user_role, client_ip, success, detail)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (station_id, device_id, user.get("sub"), user.get("role"), client_ip, int(success), detail)
+        )
 
 router = APIRouter(tags=["Telemetry Ingestion & Stats"])
 
@@ -65,7 +93,10 @@ def get_esp32_latest_telemetry(station_id: str = "AWS-01"):
 @router.post("/telemetry/esp32/ingest")
 async def ingest_esp32_telemetry(
     payload: Dict[str, Any] = Body(...),
-    background_tasks: BackgroundTasks = BackgroundTasks(), current_user: Dict[str, Any] = Depends(get_current_user)
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    rate_limit: None = Depends(enforce_rate_limit)
 ):
     """
     Receives a real-time telemetry frame dispatched by the ESP32 edge node.
@@ -116,9 +147,13 @@ async def ingest_esp32_telemetry(
 
     try:
         result = weather_service.process_esp32_frame(payload)
+        # Log successful ingest
+        log_ingest_audit(station_id, payload.get("device_id"), current_user, request.client.host, True, "Ingest successful")
         return result
     except Exception as e:
         logger.error(f"[ESP32 INGEST ERROR] {station_id}: {e}", exc_info=True)
+        # Log failure
+        log_ingest_audit(station_id, payload.get("device_id"), current_user, request.client.host, False, str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"ESP32 frame processing failed: {str(e)}"

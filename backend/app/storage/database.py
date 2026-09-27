@@ -361,6 +361,19 @@ def init_db():
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_incidents_station_status ON incidents(station_id, status);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ingest_audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    station_id VARCHAR(32) NOT NULL,
+                    device_id VARCHAR(64),
+                    user_sub VARCHAR(64),
+                    user_role VARCHAR(32),
+                    client_ip VARCHAR(45),
+                    success INTEGER NOT NULL,
+                    detail TEXT,
+                    timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
 
             try:
                 cur.execute("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS evidence_data TEXT NOT NULL DEFAULT '{}';")
@@ -580,6 +593,19 @@ def init_db():
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_incidents_station_status ON incidents(station_id, status);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ingest_audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    station_id VARCHAR(32) NOT NULL,
+                    device_id VARCHAR(64),
+                    user_sub VARCHAR(64),
+                    user_role VARCHAR(32),
+                    client_ip VARCHAR(45),
+                    success INTEGER NOT NULL,
+                    detail TEXT,
+                    timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
 
             try:
                 cur.execute("ALTER TABLE incidents ADD COLUMN evidence_data TEXT NOT NULL DEFAULT '{}';")
