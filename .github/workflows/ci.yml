@@ -15,16 +15,22 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-    - name: Run tests and generate acceptance report
-      if: always()
-      run: python scripts/acceptance_status.py
-    - name: Upload acceptance status artifact
+    - name: Install frontend dependencies
+      run: npm ci
+    - name: Run acceptance evidence checks
+      run: python scripts/audit_status.py
+    - name: Upload acceptance evidence artifact
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: acceptance-status
-        path: acceptance_status.json
+        name: acceptance-evidence
+        path: DOCS/status_audit_evidence.json

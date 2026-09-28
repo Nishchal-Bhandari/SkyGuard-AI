@@ -13,3 +13,5 @@ backend/data/*.db-shm
 scratch_*.py
 acceptance_status.json
 ESP32/secrets.h
+
+.venv/

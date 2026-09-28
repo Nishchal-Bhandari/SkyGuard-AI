@@ -5,7 +5,6 @@ import { EditStationModal } from '../modals/EditStationModal';
 import { tacticalAudio } from '../../utils/audio';
 export const StationCredentials = () => {
   const { role, stationCredentials, toggleStationStatus, resetStationPassword, isLoadingStations } = useAuth();
-  const [revealedPasswords, setRevealedPasswords] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [stationToEdit, setStationToEdit] = useState(null);
@@ -25,20 +24,6 @@ export const StationCredentials = () => {
       </div>
     );
   }
-
-  const toggleReveal = (stationId) => {
-    setRevealedPasswords(prev => ({
-      ...prev,
-      [stationId]: !prev[stationId]
-    }));
-    tacticalAudio.playClick();
-  };
-
-  const copyPassword = (password) => {
-    navigator.clipboard.writeText(password);
-    tacticalAudio.playSuccess();
-    alert("Passphrase copied to clipboard.");
-  };
 
   const handleToggleStatus = async (stationId) => {
     tacticalAudio.playClick();
@@ -100,7 +85,7 @@ export const StationCredentials = () => {
                     <th>STATION NAME</th>
                     <th>REGION & COORDINATES</th>
                     <th>USERNAME</th>
-                    <th>SECURITY / ACCESS KEY</th>
+                    <th>PASSWORD STATUS</th>
                     <th>STATUS</th>
                     <th>LAST LOGIN</th>
                     <th>ACTIONS</th>
@@ -108,8 +93,6 @@ export const StationCredentials = () => {
                 </thead>
                 <tbody>
                   {stationCredentials.map(s => {
-                    const isRevealed = !!revealedPasswords[s.stationId];
-                    const pwd = s.password || "sentinel2026";
                     return (
                       <tr key={s.stationId}>
                         <td style={{ fontWeight: 'bold', color: 'var(--neon-cyan)', whiteSpace: 'nowrap' }}>{s.stationId}</td>
@@ -122,27 +105,7 @@ export const StationCredentials = () => {
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}><code>{s.username}</code></td>
                         <td style={{ whiteSpace: 'nowrap' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: isRevealed ? 'var(--neon-green)' : 'var(--text-muted)' }}>
-                              {isRevealed ? pwd : '••••••••••••'}
-                            </span>
-                            <button
-                              className="cyber-btn btn-sm"
-                              style={{ padding: '2px 6px', fontSize: '0.65rem' }}
-                              title={isRevealed ? "Hide Passphrase" : "Reveal Passphrase"}
-                              onClick={() => toggleReveal(s.stationId)}
-                            >
-                              <i className={`fa-solid ${isRevealed ? 'fa-eye-slash' : 'fa-eye'}`}></i>
-                            </button>
-                            <button
-                              className="cyber-btn btn-sm"
-                              style={{ padding: '2px 6px', fontSize: '0.65rem' }}
-                              title="Copy Passphrase"
-                              onClick={() => copyPassword(pwd)}
-                            >
-                              <i className="fa-solid fa-copy"></i>
-                            </button>
-                          </div>
+                          <span>Stored securely ? reset to change</span>
                         </td>
                       <td style={{ whiteSpace: 'nowrap' }}>
                         <span className={`cyber-badge ${s.status === 'ACTIVE' ? 'badge-normal' : 'badge-critical'}`}>

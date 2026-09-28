@@ -8,10 +8,10 @@ const PIPELINE_STEPS = [
   { label: "Data Ingested", desc: "Cloud PostgreSQL telemetry verified" },
   { label: "Data Validated", desc: "Physical plausibility & sanity checks" },
   { label: "Data Preprocessed", desc: "Scrubbed -999 flags & sensor errors" },
-  { label: "Features Generated", desc: "8-D vector: lags, diurnal sine/cos & dew-point" },
+  { label: "Features Generated", desc: "12-feature causal station vector" },
   { label: "Training Isolation Forest", desc: "Fitting ensemble isolation trees from scratch" },
   { label: "Model Evaluation", desc: "Calibrating dynamic threshold & contamination" },
-  { label: "Model Registered", desc: "Activated in PostgreSQL model_registry" },
+  { label: "Model Registered", desc: "Candidate saved for activation checks" },
   { label: "Model Activated", desc: "Ready for live real-time scoring" }
 ];
 
@@ -116,13 +116,13 @@ export const StationUpload = () => {
   };
 
   useEffect(() => {
-    if (activeStationId) {
+    if (activeStationId && stations.length > 0) {
       refreshStationStats(activeStationId);
     }
     return () => {
       activePollId.current = null;
     };
-  }, [activeStationId]);
+  }, [activeStationId, stations.length]);
 
   if (!stations || stations.length === 0) {
     return (
@@ -290,8 +290,10 @@ export const StationUpload = () => {
     tacticalAudio.playSuccess();
   };
 
-  const pollTrainingJob = async (stationId, jobId) => {
-    const currentPollId = Date.now();
+  // This declaration stays available when the empty-stations view returns early.
+  // The former const initializer was skipped, leaving the refresh effect in its TDZ.
+  async function pollTrainingJob(stationId, jobId) {
+    const currentPollId = Symbol('training-poll');
     activePollId.current = currentPollId;
     
     let jobStatus = "RUNNING";
@@ -369,7 +371,7 @@ export const StationUpload = () => {
         await new Promise(r => setTimeout(r, 600));
       }
     }
-  };
+  }
 
   const runTrainingPipeline = async () => {
     if (!isAuthorizedForStation) {
@@ -380,8 +382,8 @@ export const StationUpload = () => {
     }
 
     const availableRecords = Math.max(dbStats.total_records || 0, uploadedDataset.length);
-    if (availableRecords < 20) {
-      setErrorMessage(`Insufficient historical telemetry records for ${activeStationId}. Found ${availableRecords} records; minimum 20 required.`);
+    if (availableRecords < 720) {
+      setErrorMessage(`Insufficient historical telemetry records for ${activeStationId}. Found ${availableRecords} records; at least 720 clean distinct observations across 14 days are required.`);
       setPipelineState('ERROR');
       tacticalAudio.playAlarm();
       return;
@@ -659,7 +661,7 @@ export const StationUpload = () => {
                 </div>
                 <div style={{ fontSize: '0.74rem', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', marginTop: '4px' }}>
                   {trainedResult
-                    ? <>{trainedResult.training_summary?.valid_records || availableHistoricalCount} historical records processed | 8 features generated | Dynamic Threshold: <strong style={{ color: 'var(--neon-cyan)' }}>{trainedResult.training_summary?.dynamic_threshold || trainedResult.threshold}</strong> | Model ID: <strong style={{ color: 'var(--neon-cyan)' }}>{trainedResult.model_id}</strong></>
+                    ? <>{trainedResult.training_summary?.valid_records || availableHistoricalCount} historical records processed | {trainedResult.training_summary?.features?.length || 12} features generated | Dynamic Threshold: <strong style={{ color: 'var(--neon-cyan)' }}>{trainedResult.training_summary?.dynamic_threshold || trainedResult.threshold}</strong> | Model ID: <strong style={{ color: 'var(--neon-cyan)' }}>{trainedResult.model_id}</strong></>
                     : <span style={{ color: 'var(--neon-cyan)' }}>Activating model — fetching model card...</span>
                   }
                 </div>

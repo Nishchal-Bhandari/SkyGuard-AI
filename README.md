@@ -308,25 +308,15 @@ npm run backend
 npm run dev
 ```
 
-**Demo credentials:** `admin` / `sentinel2026` — demonstration only, not production credentials.
+**Login:** use the admin username and password for the database your backend currently connects to. `DEFAULT_ADMIN_PASSWORD` only seeds a new account; changing that setting never resets an existing password. Use `python scripts/diagnose_admin_login.py` to check account existence, status, and whether the configured seed password matches without printing secrets. The example `admin` / `sentinel2026` works only if that is the account's stored password. Set a unique password and `SKYGUARD_SECRET_KEY` for production. The browser shows its demo quick-fill helper only when the running backend reports `DEMO_MODE=true`.
 
-A station needs **≥ 100 clean observations** before training is permitted. This floor ensures the covariance model, hourly climatology coverage, and holdout split are all adequately supported.
+A station needs **at least 720 clean distinct observations across 14 days** before training is permitted. The MATURE tier additionally needs at least 4,380 observations spanning two seasons.
 
 ---
 
-## Controlled Evaluation Results
+## Current verification
 
-> **These are results on controlled synthetic fault injection.** They measure the system against its own fault model, not against real hardware failures, and are **not field-validated performance**. Real labelled hardware-failure validation remains future work.
-
-| Metric | Value |
-|---|---|
-| Precision | 0.839 |
-| Recall (point-level) | 0.502 |
-| F1 | 0.628 |
-| False Positive Rate | 0.0102 |
-| Event-level recall | 35 / 36 events |
-| Root-cause accuracy | 0.844 – 0.878 |
-| Latency | 1.24 ms mean, 1.40 ms p95, ~805 obs/s |
+The current [implementation report](DOCS/FINAL_IMPLEMENTATION_REPORT.md) and [machine-readable evidence](DOCS/status_audit_evidence.json) describe what has been tested and what remains. Model cards report an unlabelled temporal holdout anomaly rate and explicitly labelled synthetic-spike recall. No current field precision, recall, root-cause accuracy, or throughput claim has been established.
 
 ---
 
@@ -336,9 +326,9 @@ A hackathon prototype built to be technically defensible — **not** a certified
 
 Three limitations stated plainly:
 
-1. **All metrics are synthetic.** No labelled real-data validation exists.
+1. **The available fault-recall metrics are synthetic.** No labelled real-data validation exists.
 2. **Confidence is not yet a validated probability** — it is a model-derived score bounded between 0 and 1, not a calibrated real-world probability.
-3. **Point recall (0.50) is well below event recall (0.97)** — long faults are caught but flagged intermittently.
+3. **PostgreSQL, browser and ESP32 hardware acceptance are outstanding.** The local test suite uses disposable SQLite storage and does not establish deployment behavior.
 
 ---
 
@@ -357,10 +347,11 @@ SkyGuard-AI/
 │   │   ├── faults.py              ← Fault injection + reset
 │   │   ├── incidents.py           ← Incident CRUD + adjudication
 │   │   └── maintenance.py         ← Maintenance endpoints
-│   ├── auth/security.py           ← PBKDF2 + HMAC JWT
+│   ├── auth/security.py           ← Argon2id + HMAC JWT (legacy PBKDF2 verification)
 │   ├── services/
 │   │   ├── training_service.py    ← 8-stage training lifecycle
-│   │   ├── weather_service.py     ← Async Open-Meteo poller + full scoring chain
+│   │   ├── weather_service.py     ← Async Open-Meteo source adapter
+│   │   ├── observation_pipeline.py ← Shared assessment and persistence pipeline
 │   │   └── model_storage.py       ← JSON artifact persistence
 │   └── storage/database.py        ← All SQL (SQLite + PostgreSQL dual-mode)
 ├── ml/

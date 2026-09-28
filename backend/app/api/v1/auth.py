@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 
 from backend.app.storage.database import get_db
-from backend.app.auth.security import verify_password, create_access_token, decode_access_token
+from backend.app.auth.security import hash_password, verify_password, create_access_token, decode_access_token
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -56,6 +56,15 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, A
     if not payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired bearer token")
     
+    if payload.get("role") not in {"admin", "station_operator"}:
+        raise HTTPException(status_code=401, detail="Invalid token role")
+    if payload.get("role") == "station_operator":
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT status FROM stations WHERE station_id = ?", (payload.get("station_id"),))
+            station = cur.fetchone()
+        if not station or station["status"] != "ACTIVE":
+            raise HTTPException(status_code=403, detail="Station access is inactive")
     return payload
 
 
@@ -170,6 +179,9 @@ def login_admin(payload: AdminLoginRequest, request: Request):
             VALUES (?, 'admin', 'LOGIN_SUCCESS', 'SUCCESS', 'Admin authenticated', ?);
         """, (clean_username, now_iso))
         
+        if not admin_row["password_hash"].startswith("$argon2id$"):
+            cursor.execute("UPDATE admins SET password_hash = ? WHERE id = ?", (hash_password(payload.password), admin_row["id"]))
+
         token = create_access_token({
             "sub": admin_row["username"],
             "user_id": admin_row["id"],
@@ -234,6 +246,9 @@ def login_station(payload: StationLoginRequest, request: Request):
             VALUES (?, 'station_operator', 'LOGIN_SUCCESS', 'SUCCESS', 'Station operator authenticated', ?);
         """, (st_row["username"], now_iso))
         
+        if not st_row["password_hash"].startswith("$argon2id$"):
+            cursor.execute("UPDATE stations SET password_hash = ? WHERE id = ?", (hash_password(payload.password), st_row["id"]))
+
         token = create_access_token({
             "sub": st_row["username"],
             "user_id": st_row["id"],

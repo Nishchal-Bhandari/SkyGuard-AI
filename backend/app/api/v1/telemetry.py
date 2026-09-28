@@ -70,12 +70,13 @@ def esp32_health():
 
 
 @router.get("/telemetry/esp32/latest")
-def get_esp32_latest_telemetry(station_id: str = "AWS-01"):
+def get_esp32_latest_telemetry(station_id: str = "AWS-01", current_user: Dict[str, Any] = Depends(get_current_user)):
     """
     Returns the latest real-time frame and cross-tier verification
     for the ESP32 Live Monitor UI.
     """
     st_id = str(station_id).strip().upper()
+    require_station_access(st_id, current_user)
     latest = weather_service.esp32_latest.get(st_id)
     if not latest:
         # Fallback to current live_state if available
@@ -135,7 +136,9 @@ async def ingest_esp32_telemetry(
             detail="Empty payload. Expected ESP32 telemetry JSON."
         )
 
-    station_id = str(payload.get("station_id", "AWS-01")).strip().upper()
+    station_id = str(payload.get("station_id", "")).strip().upper()
+    if not station_id:
+        raise HTTPException(status_code=422, detail="STATION_ID_REQUIRED")
     if authorization:
         current_user = get_current_user(authorization)
     elif x_station_key:
@@ -168,9 +171,15 @@ async def ingest_esp32_telemetry(
 
     try:
         result = weather_service.process_esp32_frame(payload)
+        if not result.get("acknowledged", result.get("success", False)):
+            raise HTTPException(status_code=409, detail=result.get("status", "NOT_ACKNOWLEDGED"))
         # Log successful ingest
         log_ingest_audit(station_id, payload.get("device_id"), current_user, request.client.host if request.client else "unknown", True, "Ingest successful")
         return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[ESP32 INGEST ERROR] {station_id}: {e}", exc_info=True)
         # Log failure
@@ -216,32 +225,15 @@ def get_fleet_live_state(
 
 def parse_iso_or_datetime(val: str) -> str:
     """Attempts to parse varied timestamp string formats into UTC ISO-8601 string."""
-    clean_val = str(val).strip().replace("/", "-")
-    for fmt in (
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%d %H:%M",
-        "%d-%m-%Y %H:%M:%S",
-        "%d-%m-%Y %H:%M",
-        "%Y-%m-%d"
-    ):
-        try:
-            dt = datetime.datetime.strptime(clean_val, fmt)
-            return dt.replace(tzinfo=datetime.timezone.utc).isoformat()
-        except ValueError:
-            continue
-    # Fallback to direct ISO; raise if unparseable to avoid silent misdating
-    try:
-        return datetime.datetime.fromisoformat(clean_val).isoformat()
-    except Exception:
-        raise ValueError(f"Unparseable timestamp: {clean_val}")
+    from backend.app.services.observation_pipeline import timestamp
+    return timestamp(val)
 
 
 @router.post("/stations/{station_id}/telemetry/upload")
 async def upload_station_telemetry(
     station_id: str,
     background_tasks: BackgroundTasks,
+    request: Request,
     file: Optional[UploadFile] = File(None),
     payload: Optional[List[Dict[str, Any]]] = Body(None),
     current_user: Dict[str, Any] = Depends(get_current_user)
@@ -265,6 +257,9 @@ async def upload_station_telemetry(
                 detail=f"Station identity violation: Authenticated as '{user_station}', cannot upload telemetry for '{clean_target_id}'."
             )
 
+    require_station_access(clean_target_id, current_user)
+    if request.headers.get("content-type", "").startswith("application/json"):
+        payload = await request.json()
     parsed_rows = []
     rejected_rows = []
     warnings = []
@@ -444,24 +439,26 @@ async def upload_station_telemetry(
             }
         )
 
-    def _background_ingest(station_id, parsed_rows):
-        insert_telemetry_batch(station_id, parsed_rows)
-        calibrate_station_qc(station_id)
-
-    # Ingest into Cloud PostgreSQL in a background worker to prevent blocking
-    background_tasks.add_task(_background_ingest, clean_target_id, parsed_rows)
-    stats = get_station_telemetry_stats(clean_target_id)
-
+    from backend.app.services.observation_pipeline import observation_pipeline
+    result = observation_pipeline.batch(clean_target_id, parsed_rows)
     return {
-        "success": True,
-        "station_id": clean_target_id,
-        "rows_queued": len(parsed_rows),
-        "total_records": stats.get("total_records", 0) + len(parsed_rows),
-        "rows_rejected": len(rejected_rows),
-        "validation_warnings": warnings[:15],
-        "rejection_sample": rejected_rows[:5],
-        "message": f"Successfully queued {len(parsed_rows)} telemetry records for background ingestion for {clean_target_id}."
+        **result, "success": result["accepted"] + result["duplicates"] > 0,
+        "station_id": clean_target_id, "rows_queued": len(parsed_rows),
+        "total_records": get_station_telemetry_stats(clean_target_id).get("total_records", 0),
+        "rows_rejected": len(rejected_rows) + result["rejected"],
+        "validation_warnings": warnings[:15], "rejection_sample": rejected_rows[:5],
     }
+
+
+@router.post("/stations/{station_id}/telemetry/batch")
+def ingest_batch(station_id: str, payload: List[Dict[str, Any]], current_user: Dict[str, Any] = Depends(get_current_user)):
+    from backend.app.services.observation_pipeline import observation_pipeline
+    sid = station_id.strip().upper()
+    require_station_access(sid, current_user)
+    try:
+        return observation_pipeline.batch(sid, payload)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.get("/stations/{station_id}/telemetry/stats")

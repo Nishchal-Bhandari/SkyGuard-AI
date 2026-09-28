@@ -1,12 +1,21 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { tacticalAudio } from '../../utils/audio';
+import { apiClient } from '../../utils/apiClient';
 
 export const LoginScreen = () => {
+  const [demoMode, setDemoMode] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    apiClient.getBackendHealth().then(health => {
+      if (mounted) setDemoMode(health.demo_mode === true);
+    }).catch(() => {});
+    return () => { mounted = false; };
+  }, []);
   const { login } = useAuth();
   const [activeTab, setActiveTab] = useState('admin'); // 'admin' | 'station_operator'
   const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('sentinel2026');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -16,7 +25,7 @@ export const LoginScreen = () => {
     setErrorMsg('');
     if (role === 'admin') {
       setUsername('admin');
-      setPassword('sentinel2026');
+      setPassword(demoMode ? 'sentinel2026' : '');
     } else {
       setUsername('');
       setPassword('');
@@ -170,7 +179,7 @@ export const LoginScreen = () => {
           </form>
 
           {/* Quick-Fill Demo Helpers */}
-          <div className="demo-helper-box">
+          {demoMode && <div className="demo-helper-box">
             <div className="demo-helper-title">
               <i className="fa-solid fa-bolt text-amber"></i>
               <span>QUICK-SELECT DEMO CREDENTIALS:</span>
@@ -190,7 +199,7 @@ export const LoginScreen = () => {
                 </div>
               )}
             </div>
-          </div>
+          </div>}
         </div>
       </div>
     </div>

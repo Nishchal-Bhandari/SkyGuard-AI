@@ -13,28 +13,29 @@ from backend.app.config import (
 )
 
 # ---------------------------------------------------------------------------
-# Cryptographic Password Hashing (PBKDF2-HMAC-SHA256)
+# Cryptographic password hashing (Argon2id; legacy PBKDF2 verification)
 # ---------------------------------------------------------------------------
 
 def hash_password(password: str) -> str:
     """
-    Hashes a plaintext password using PBKDF2-HMAC-SHA256 with a secure 16-byte salt
-    and 100,000 iterations. Format: pbkdf2:sha256:100000$<salt_hex>$<hash_hex>
+    Hashes a password with Argon2id. Legacy PBKDF2 hashes remain verifiable.
     """
     if not password:
         raise ValueError("Password cannot be empty")
-    salt = os.urandom(16)
-    iterations = 100000
-    derived = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, iterations)
-    return f"pbkdf2:sha256:{iterations}${salt.hex()}${derived.hex()}"
+    from argon2 import PasswordHasher
+    return PasswordHasher().hash(password)
+
 
 def verify_password(password: str, password_hash: str) -> bool:
     """
-    Verifies a plaintext password against a stored PBKDF2 hash using constant-time comparison.
+    Verifies Argon2id or a legacy PBKDF2 hash.
     """
     if not password or not password_hash:
         return False
     try:
+        if password_hash.startswith("$argon2id$"):
+            from argon2 import PasswordHasher
+            return PasswordHasher().verify(password_hash, password)
         if not password_hash.startswith("pbkdf2:sha256:"):
             # Safe fallback for legacy or direct sha256 hashes if any
             return False

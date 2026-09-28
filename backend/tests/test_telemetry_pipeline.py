@@ -116,11 +116,26 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         rows = fetch_historical_telemetry("AWS-08")
         self.assertEqual(len(rows), 25)
 
+    def seed_training_history(self, sid):
+        # DOCS requires >=720 distinct samples over >=14 days, replacing the old 25-row fixture.
+        import datetime, math, random
+        from backend.app.storage.database import insert_telemetry_batch
+        rng = random.Random(42 if sid == "AWS-07" else 43)
+        start = datetime.datetime(2026, 6, 1, tzinfo=datetime.timezone.utc)
+        rows = [{"timestamp": (start+datetime.timedelta(hours=i)).isoformat(),
+                 "temp": 28+3*math.sin(i*math.pi/12)+rng.gauss(0,.5),
+                 "hum": 65-5*math.sin(i*math.pi/12)+rng.gauss(0,2),
+                 "pres": 1008+rng.gauss(0,.5)} for i in range(960)]
+        with get_db() as conn:
+            conn.cursor().execute("DELETE FROM telemetry WHERE station_id = ?", (sid,))
+        insert_telemetry_batch(sid, rows)
+
     def test_03_train_aws07_only_uses_aws07_data(self):
         """TEST 3: Train AWS-07 -> only AWS-07 data is used"""
+        self.seed_training_history("AWS-07")
         response = self.client.post(
             "/api/v1/stations/AWS-07/train",
-            json={},
+            json={"version": "v1.0"},
             headers=self.headers
         )
         self.assertEqual(response.status_code, 200)
@@ -128,7 +143,7 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertEqual(data["station_id"], "AWS-07")
         self.assertEqual(data["model_version"], "v1.0")
-        self.assertEqual(data["valid_records"], 25)
+        self.assertEqual(data["valid_records"], 960)
 
         # Verify model card in active model
         active_rec = get_active_model_record("AWS-07")
@@ -138,9 +153,10 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
 
     def test_04_train_aws08_only_uses_aws08_data(self):
         """TEST 4: Train AWS-08 -> only AWS-08 data is used"""
+        self.seed_training_history("AWS-08")
         response = self.client.post(
             "/api/v1/stations/AWS-08/train",
-            json={},
+            json={"version": "v1.0"},
             headers=self.headers
         )
         self.assertEqual(response.status_code, 200)
@@ -148,7 +164,7 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertEqual(data["station_id"], "AWS-08")
         self.assertEqual(data["model_version"], "v1.0")
-        self.assertEqual(data["valid_records"], 25)
+        self.assertEqual(data["valid_records"], 960)
 
         # Ensure Model AWS-07 != Model AWS-08
         m07 = get_active_model_record("AWS-07")
@@ -223,7 +239,7 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         """TEST 9: Retrain AWS-07 -> creates v1.1 without deleting v1.0"""
         response = self.client.post(
             "/api/v1/stations/AWS-07/train",
-            json={},
+            json={"version": "v1.1"},
             headers=self.headers
         )
         self.assertEqual(response.status_code, 200)
@@ -273,7 +289,8 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertTrue(data["success"])
+        self.assertGreaterEqual(data["rows_rejected"], 1)
+        # Conflicting duplicates must not overwrite original telemetry.
         # Should have accepted the valid records and handled duplicate safely
         self.assertGreaterEqual(data["rows_queued"], 1)
 
@@ -304,22 +321,15 @@ class TestSkyGuardTelemetryPipeline(unittest.TestCase):
     def test_13_model_promotion_requires_validation_gate(self):
         with get_db() as conn:
             cur = conn.cursor()
-            cur.execute("UPDATE model_registry SET metrics = ? WHERE station_id = ? AND model_version = ?", ('{"validation_score":0.84}', "AWS-07", "v1.1"))
-
-        rejected = self.client.post(
-            "/api/v1/stations/AWS-07/models/v1.1/promote",
-            headers=self.headers,
-        )
+            cur.execute("SELECT sha256 FROM model_registry WHERE station_id=? AND model_version=?", ("AWS-07", "v1.1"))
+            original = cur.fetchone()["sha256"]
+            cur.execute("UPDATE model_registry SET sha256=? WHERE station_id=? AND model_version=?", ("tampered", "AWS-07", "v1.1"))
+        rejected = self.client.post("/api/v1/stations/AWS-07/models/v1.1/promote", headers=self.headers)
         self.assertEqual(rejected.status_code, 400)
         self.assertEqual(get_active_model_record("AWS-07")["model_version"], "v1.0")
-
         with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute("UPDATE model_registry SET metrics = ? WHERE station_id = ? AND model_version = ?", ('{"validation_score":0.90}', "AWS-07", "v1.1"))
-        accepted = self.client.post(
-            "/api/v1/stations/AWS-07/models/v1.1/promote",
-            headers=self.headers,
-        )
+            conn.cursor().execute("UPDATE model_registry SET sha256=? WHERE station_id=? AND model_version=?", (original, "AWS-07", "v1.1"))
+        accepted = self.client.post("/api/v1/stations/AWS-07/models/v1.1/promote", headers=self.headers)
         self.assertEqual(accepted.status_code, 200)
         self.assertEqual(get_active_model_record("AWS-07")["model_version"], "v1.1")
 

@@ -237,6 +237,20 @@ export const StationHUD = () => {
     );
   }
 
+  if (!station.source_timestamp) {
+    return (
+      <div className="cyber-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <i className="fa-solid fa-satellite-dish" style={{ fontSize: '3rem', color: 'var(--neon-cyan)', marginBottom: '16px', opacity: 0.8 }}></i>
+        <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.2rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
+          {station.id} — AWAITING FIRST OBSERVATION
+        </div>
+        <div style={{ color: 'var(--text-secondary)', marginTop: '10px' }}>
+          The station is registered. Sensor readings and assessments will appear after telemetry is processed.
+        </div>
+      </div>
+    );
+  }
+
   const xaiAttributions = mlResult?.xai_explanation?.attributions || [];
 
   return (
@@ -446,7 +460,7 @@ export const StationHUD = () => {
         {/* Predictive Sensor Health Index & Maintenance Card */}
         <div className="cyber-card" style={{ padding: '16px' }}>
           <div className="sim-box-title" style={{ marginBottom: '12px' }}>
-            <span><i className="fa-solid fa-heart-pulse text-green"></i> SENSOR HEALTH INDEX & PREDICTIVE RUL</span>
+            <span><i className="fa-solid fa-heart-pulse text-green"></i> SENSOR HEALTH INDEX & DEGRADATION ESTIMATE</span>
             <span className={`cyber-badge ${sensorHealth?.overall_health_score >= 80 ? 'badge-normal' : (sensorHealth?.overall_health_score >= 50 ? 'badge-suspect' : 'badge-critical')}`}>
               SHI: {sensorHealth?.overall_health_score ?? 100}%
             </span>

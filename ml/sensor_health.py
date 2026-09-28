@@ -30,6 +30,10 @@ class SensorHealthEngine:
         """
         Evaluates the health indices of all 3 sensors and overall station telemetry.
         """
+        if current_status == "REGIONAL_EVENT":
+            drift_rate_c_per_day = 0.0
+            flatline_detected = False
+            qc_envelope_breached = False
         # Base health starts at 100%
         temp_health = 100.0
         hum_health = 100.0

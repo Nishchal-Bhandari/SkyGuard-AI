@@ -1,10 +1,12 @@
-import os
+﻿import os
 import re
 import json
 import sqlite3
 import datetime
 import logging
 import hashlib
+import secrets
+import threading
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Generator, Any, Dict, List, Optional, Tuple
@@ -32,19 +34,24 @@ except ImportError:
     PSYCOPG2_AVAILABLE = False
 
 _pg_pool: Optional[Any] = None
+_pg_pool_lock = threading.Lock()
 
 def get_pg_pool():
     global _pg_pool
     if _pg_pool is None and IS_POSTGRES and PSYCOPG2_AVAILABLE:
-        connect_kwargs = {"connect_timeout": 3}
-        if "sslmode" not in DATABASE_URL.lower():
-            connect_kwargs["sslmode"] = DATABASE_SSL_MODE
-        _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=2,
-            maxconn=20,
-            dsn=DATABASE_URL,
-            **connect_kwargs
-        )
+        with _pg_pool_lock:
+            if _pg_pool is None:
+                # Managed PostgreSQL may need several seconds to wake from idle.
+                timeout = max(1, min(60, int(os.getenv("DATABASE_CONNECT_TIMEOUT", "15"))))
+                connect_kwargs = {"connect_timeout": timeout}
+                if "sslmode" not in DATABASE_URL.lower():
+                    connect_kwargs["sslmode"] = DATABASE_SSL_MODE
+                _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+                    minconn=1,
+                    maxconn=20,
+                    dsn=DATABASE_URL,
+                    **connect_kwargs
+                )
     return _pg_pool
 
 
@@ -142,28 +149,41 @@ def get_db() -> Generator[DBConnectionWrapper, None, None]:
     """
     if IS_POSTGRES:
         if not PSYCOPG2_AVAILABLE:
-            logger.warning("psycopg2 is not available. Falling back to local SQLite.")
-            use_pg = False
+            raise RuntimeError("PostgreSQL driver unavailable; refusing fallback to a different database")
         else:
             try:
                 pool = get_pg_pool()
-                raw_conn = pool.getconn()
-                use_pg = True
+                for attempt in range(2):
+                    raw_conn = pool.getconn()
+                    try:
+                        # Poolers can retire idle sockets without telling the client.
+                        # Check a borrowed connection before running application SQL.
+                        if raw_conn.closed:
+                            raise RuntimeError("PostgreSQL connection closed while idle")
+                        probe = raw_conn.cursor()
+                        try:
+                            probe.execute("SELECT 1")
+                        finally:
+                            probe.close()
+                        raw_conn.rollback()
+                        break
+                    except Exception:
+                        pool.putconn(raw_conn, close=True)
+                        if attempt == 1:
+                            raise
             except Exception as e:
-                # Log once and fallback to local SQLite for offline resilience
-                use_pg = False
+                raise RuntimeError("Configured PostgreSQL database unavailable") from e
 
-        if use_pg:
-            conn = DBConnectionWrapper(raw_conn, is_postgres=True)
-            try:
-                yield conn
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-            finally:
-                pool.putconn(raw_conn)
-            return
+        conn = DBConnectionWrapper(raw_conn, is_postgres=True)
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            pool.putconn(raw_conn)
+        return
 
     # SQLite mode (Default or Fallback)
     db_path_str = DATABASE_URL
@@ -188,6 +208,30 @@ def get_db() -> Generator[DBConnectionWrapper, None, None]:
         raise
     finally:
         conn.close()
+
+
+def insert_assessment_with_sequence_recovery(conn, cursor, sql: str, params: tuple) -> None:
+    """Recover when a legacy writer inserts explicit IDs ahead of PostgreSQL's sequence."""
+    if not conn.is_postgres:
+        cursor.execute(sql, params)
+        return
+    cursor.execute("SAVEPOINT assessment_insert_retry")
+    try:
+        cursor.execute(sql, params)
+    except Exception as error:
+        cursor.execute("ROLLBACK TO SAVEPOINT assessment_insert_retry")
+        cursor.execute("RELEASE SAVEPOINT assessment_insert_retry")
+        constraint = getattr(getattr(error, "diag", None), "constraint_name", None)
+        if getattr(error, "pgcode", None) != "23505" or constraint != "assessments_pkey":
+            raise
+        # Lock writers, advance past committed IDs, and retry this insert once.
+        cursor.execute("LOCK TABLE assessments IN SHARE ROW EXCLUSIVE MODE")
+        cursor.execute("""SELECT setval('assessments_id_seq'::regclass,
+            GREATEST(COALESCE((SELECT MAX(id) FROM assessments), 0),
+                     (SELECT last_value FROM assessments_id_seq)), true)""")
+        cursor.execute(sql, params)
+    else:
+        cursor.execute("RELEASE SAVEPOINT assessment_insert_retry")
 
 
 # -----------------------------------------------------------------------------
@@ -224,7 +268,7 @@ def init_db():
                     station_name VARCHAR(128) NOT NULL,
                     username VARCHAR(64) UNIQUE NOT NULL,
                     password_hash VARCHAR(255) NOT NULL,
-                    access_key VARCHAR(128) DEFAULT 'sentinel2026',
+                    access_key VARCHAR(128) DEFAULT '',
                     device_key_hash TEXT,
                     latitude DOUBLE PRECISION NOT NULL,
                     longitude DOUBLE PRECISION NOT NULL,
@@ -260,11 +304,16 @@ def init_db():
                 );
             """)
 
-            # Optional hypertable attempt
+            # Optional hypertable attempt. A missing TimescaleDB function must not
+            # poison the surrounding PostgreSQL schema transaction.
+            cur.execute("SAVEPOINT optional_hypertable")
             try:
                 cur.execute("SELECT create_hypertable('telemetry', 'timestamp', if_not_exists => TRUE);")
-            except Exception:
-                pass
+                cur.execute("RELEASE SAVEPOINT optional_hypertable")
+            except Exception as error:
+                cur.execute("ROLLBACK TO SAVEPOINT optional_hypertable")
+                cur.execute("RELEASE SAVEPOINT optional_hypertable")
+                logger.info("TimescaleDB hypertable unavailable; using PostgreSQL table: %s", error)
 
             cur.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_station_id ON telemetry(station_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry(timestamp DESC);")
@@ -469,7 +518,7 @@ def init_db():
                     station_name TEXT NOT NULL,
                     username TEXT UNIQUE NOT NULL COLLATE NOCASE,
                     password_hash TEXT NOT NULL,
-                    access_key TEXT DEFAULT 'sentinel2026',
+                    access_key TEXT DEFAULT '',
                     device_key_hash TEXT,
                     latitude REAL NOT NULL,
                     longitude REAL NOT NULL,
@@ -514,7 +563,7 @@ def init_db():
             try:
                 cur.execute("ALTER TABLE telemetry ADD COLUMN grid_point TEXT NOT NULL DEFAULT '';")
             except Exception:
-                pass  # Column already exists — sqlite3 raises OperationalError
+                pass  # Column already exists â€” sqlite3 raises OperationalError
 
             # Migrate unique index: drop old 2-column index and create 3-column one.
             try:
@@ -901,6 +950,12 @@ def init_db():
                         END
                         $$;
                     """)
+                    # Existing databases may already have a default sequence whose
+                    # next value trails imported rows. Never move it backwards.
+                    cur.execute(f"LOCK TABLE {_tbl} IN SHARE ROW EXCLUSIVE MODE")
+                    cur.execute(f"""SELECT setval('{_tbl}_id_seq'::regclass,
+                        GREATEST(COALESCE((SELECT MAX(id) FROM {_tbl}), 0),
+                                 (SELECT last_value FROM {_tbl}_id_seq)), true)""")
                     cur.execute(f"RELEASE SAVEPOINT {_sp}")
                 except Exception as _seq_err:
                     # Roll back only this savepoint so the outer transaction stays alive
@@ -934,6 +989,9 @@ def init_db():
             )
         """)
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_regional_event_station_time ON regional_event_history(station_id, observed_at);")
+
+        from backend.app.storage.migrations import migrate
+        migrate(conn)
 
         # SQLite trigger is the final guard against accidental raw updates.
         if not conn.is_postgres:
@@ -1087,18 +1145,17 @@ def persist_assessment(station_id: str, assessment: Dict[str, Any], source_times
     timestamp = source_timestamp or datetime.datetime.now(datetime.timezone.utc).isoformat()
     with get_db() as conn:
         cur = conn.cursor()
-        if conn.is_postgres:
-            cur.execute("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM assessments")
-            next_id = int((cur.fetchone() or {}).get("next_id", 1))
-        else:
-            next_id = None
-        columns = "id, station_id, source_timestamp, quality_state, severity, classification, anomaly_score, confidence, evidence_completeness, evidence_data"
-        values = (next_id, clean_id, timestamp, assessment.get("quality_state", "VALID"), assessment.get("severity", "NONE"), assessment.get("classification", "NORMAL"), assessment.get("anomaly_score"), assessment.get("confidence"), assessment.get("evidence_completeness"), json.dumps(assessment, default=str)) if next_id is not None else (clean_id, timestamp, assessment.get("quality_state", "VALID"), assessment.get("severity", "NONE"), assessment.get("classification", "NORMAL"), assessment.get("anomaly_score"), assessment.get("confidence"), assessment.get("evidence_completeness"), json.dumps(assessment, default=str))
-        placeholders = "?, ?, ?, ?, ?, ?, ?, ?, ?, ?" if next_id is not None else "?, ?, ?, ?, ?, ?, ?, ?, ?"
-        if next_id is None:
-            columns = "station_id, source_timestamp, quality_state, severity, classification, anomaly_score, confidence, evidence_completeness, evidence_data"
-        cur.execute("""
-            INSERT INTO assessments (""" + columns + ") VALUES (" + placeholders + ")", values)
+        insert_assessment_with_sequence_recovery(conn, cur, """
+            INSERT INTO assessments
+                (station_id, source_timestamp, quality_state, severity, classification,
+                 anomaly_score, confidence, evidence_completeness, evidence_data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            clean_id, timestamp, assessment.get("quality_state", "VALID"),
+            assessment.get("severity", "NONE"), assessment.get("classification", "NORMAL"),
+            assessment.get("anomaly_score"), assessment.get("confidence"),
+            assessment.get("evidence_completeness"), json.dumps(assessment, default=str)
+        ))
 
 
 def _decode_assessment_row(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -1194,7 +1251,7 @@ def fetch_historical_telemetry(station_id: str, limit: int = 50000) -> List[Dict
         cur = conn.cursor()
         cur.execute("""
             SELECT timestamp, temperature as temp, humidity as hum, pressure as pres,
-                   wind_speed as wind, rainfall as rain, solar, battery, signal, qc_flag
+                   wind_speed as wind, rainfall as rain, solar, battery, signal, qc_flag, grid_point
             FROM telemetry
             WHERE station_id = ?
             ORDER BY timestamp ASC
@@ -1436,7 +1493,8 @@ def ensure_station_exists(station_id: str, station_name: Optional[str] = None, c
     clean_id = station_id.strip().upper()
     name = station_name or f"{clean_id} Weather Station"
     uname = f"op_{clean_id.lower().replace('-', '_')}"
-    pwd_hash = hash_password("sentinel2026")
+    # Internal auto-provisioning must never create a usable known password.
+    pwd_hash = hash_password(secrets.token_urlsafe(48))
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     
     def _execute(c):
@@ -1446,7 +1504,7 @@ def ensure_station_exists(station_id: str, station_name: Optional[str] = None, c
                 INSERT INTO stations (
                     station_id, station_name, username, password_hash, access_key,
                     latitude, longitude, elevation, region, status, created_by, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, 'sentinel2026', 17.3850, 78.4867, 500.0, 'General', 'ACTIVE', 'system', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ) VALUES (%s, %s, %s, %s, '', 17.3850, 78.4867, 500.0, 'General', 'ACTIVE', 'system', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT (station_id) DO NOTHING;
             """, (clean_id, name, uname, pwd_hash))
         else:
@@ -1454,7 +1512,7 @@ def ensure_station_exists(station_id: str, station_name: Optional[str] = None, c
                 INSERT OR IGNORE INTO stations (
                     station_id, station_name, username, password_hash, access_key,
                     latitude, longitude, elevation, region, status, created_by, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'sentinel2026', 17.3850, 78.4867, 500.0, 'General', 'ACTIVE', 'system', ?, ?);
+                ) VALUES (?, ?, ?, ?, '', 17.3850, 78.4867, 500.0, 'General', 'ACTIVE', 'system', ?, ?);
             """, (clean_id, name, uname, pwd_hash, now_iso, now_iso))
 
     if conn is not None:
@@ -1938,30 +1996,16 @@ def get_station_maintenance_tasks(station_id: str) -> List[Dict[str, Any]]:
         rows = cur.fetchall()
         if not rows:
             now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-            if conn.is_postgres:
-                cur.execute("SELECT COALESCE(MAX(id), 0) AS max_id FROM maintenance_tasks")
-                base_id = int((cur.fetchone() or {}).get("max_id", 0))
-                seed_rows = [
-                    (base_id + i + 1, clean_id, t["task_key"], t["title"], t["description"], 0, None, None, now_iso)
-                    for i, t in enumerate(DEFAULT_MAINTENANCE_TASKS)
-                ]
-                cur.executemany("""
-                    INSERT INTO maintenance_tasks
-                        (id, station_id, task_key, title, description, done, completed_by, completed_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT (station_id, task_key) DO NOTHING
-                """, seed_rows)
-            else:
-                seed_rows_list: List[tuple] = [
-                    (clean_id, t["task_key"], t["title"], t["description"], 0, None, None, now_iso)
-                    for t in DEFAULT_MAINTENANCE_TASKS
-                ]
-                cur.executemany("""
-                    INSERT INTO maintenance_tasks
-                        (station_id, task_key, title, description, done, completed_by, completed_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(station_id, task_key) DO NOTHING
-                """, seed_rows_list)
+            seed_rows: List[tuple] = [
+                (clean_id, t["task_key"], t["title"], t["description"], 0, None, None, now_iso)
+                for t in DEFAULT_MAINTENANCE_TASKS
+            ]
+            cur.executemany("""
+                INSERT INTO maintenance_tasks
+                    (station_id, task_key, title, description, done, completed_by, completed_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(station_id, task_key) DO NOTHING
+            """, seed_rows)
             cur.execute("SELECT * FROM maintenance_tasks WHERE station_id = ? ORDER BY id ASC", (clean_id,))
             rows = cur.fetchall()
         return [_format_maintenance_task_row(dict(r)) for r in rows]
@@ -1996,19 +2040,13 @@ def sign_maintenance_audit(station_id: str, actor: str) -> Dict[str, Any]:
     signature_hash = hashlib.sha256(f"{clean_id}:{actor}:{now_iso}:{snapshot}".encode()).hexdigest()
     with get_db() as conn:
         cur = conn.cursor()
-        if conn.is_postgres:
-            cur.execute("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM maintenance_audit")
-            new_id = int((cur.fetchone() or {}).get("next_id", 1))
-            cur.execute("""
-                INSERT INTO maintenance_audit (id, station_id, actor, snapshot, signature_hash, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (new_id, clean_id, actor, snapshot, signature_hash, now_iso))
-        else:
-            cur.execute("""
-                INSERT INTO maintenance_audit (station_id, actor, snapshot, signature_hash, created_at)
-                VALUES (?, ?, ?, ?, ?)
-            """, (clean_id, actor, snapshot, signature_hash, now_iso))
-            new_id = cur.lastrowid
+        insert_sql = """
+            INSERT INTO maintenance_audit (station_id, actor, snapshot, signature_hash, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """
+        cur.execute(insert_sql + (" RETURNING id" if conn.is_postgres else ""),
+                    (clean_id, actor, snapshot, signature_hash, now_iso))
+        new_id = cur.fetchone()["id"] if conn.is_postgres else cur.lastrowid
     return {
         "id": new_id,
         "station_id": clean_id,

@@ -7,6 +7,7 @@ from typing import Optional, List, Dict, Any, Union
 
 from backend.app.storage.database import get_db, get_station_qc_config
 from backend.app.auth.security import hash_password
+from backend.app.config import DEMO_MODE
 from backend.app.api.v1.auth import require_admin, get_current_user, require_station_access
 
 router = APIRouter(tags=["Station Management"])
@@ -19,7 +20,7 @@ class CreateStationRequest(BaseModel):
     station_id: str = Field(..., min_length=2, max_length=32, description="Unique station ID (e.g. AWS-07)")
     station_name: str = Field(..., min_length=2, max_length=128)
     username: str = Field(..., min_length=2, max_length=64)
-    password: Optional[str] = Field(default="sentinel2026", min_length=4, max_length=128)
+    password: Optional[str] = Field(default=None, min_length=4, max_length=128)
     latitude: float = Field(..., ge=-90.0, le=90.0)
     longitude: float = Field(..., ge=-180.0, le=180.0)
     elevation: Optional[float] = Field(default=0.0, ge=-500.0, le=9000.0)
@@ -39,7 +40,6 @@ class StationSummaryResponse(BaseModel):
     station_id: str
     station_name: str
     username: str
-    access_key: Optional[str] = "sentinel2026"
     latitude: float
     longitude: float
     elevation: float
@@ -64,7 +64,7 @@ class PresetStationItem(BaseModel):
     lon: float
     elevation: Optional[float] = 0.0
     username: Optional[str] = None
-    password: Optional[str] = "sentinel2026"
+    password: Optional[str] = None
     status: Optional[str] = "ACTIVE"
 
 # ---------------------------------------------------------------------------
@@ -92,7 +92,6 @@ def list_stations_admin(admin_user: Dict[str, Any] = Depends(require_admin)):
                 station_id=r["station_id"],
                 station_name=r["station_name"],
                 username=r["username"],
-                access_key=r["access_key"] if "access_key" in r.keys() and r["access_key"] else "sentinel2026",
                 latitude=r["latitude"],
                 longitude=r["longitude"],
                 elevation=r["elevation"],
@@ -121,6 +120,8 @@ def create_station(payload: CreateStationRequest, admin_user: Dict[str, Any] = D
         )
     
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    if not payload.password and not DEMO_MODE:
+        raise HTTPException(status_code=422, detail="Station password required outside DEMO_MODE")
     pwd_hash = hash_password(payload.password or "sentinel2026")
     
     with get_db() as conn:
@@ -152,7 +153,7 @@ def create_station(payload: CreateStationRequest, admin_user: Dict[str, Any] = D
             payload.station_name.strip(),
             clean_username,
             pwd_hash,
-            payload.password or "sentinel2026",
+            "",
             payload.latitude,
             payload.longitude,
             payload.elevation or 0.0,
@@ -174,7 +175,6 @@ def create_station(payload: CreateStationRequest, admin_user: Dict[str, Any] = D
             station_id=clean_station_id,
             station_name=payload.station_name.strip(),
             username=clean_username,
-            access_key=payload.password or "sentinel2026",
             latitude=payload.latitude,
             longitude=payload.longitude,
             elevation=payload.elevation or 0.0,
@@ -204,6 +204,8 @@ def batch_create_presets(presets: List[PresetStationItem], admin_user: Dict[str,
             if cursor.fetchone():
                 continue
             
+            if not p.password and not DEMO_MODE:
+                raise HTTPException(status_code=422, detail="Preset station password required outside DEMO_MODE")
             pwd_hash = hash_password(p.password or "sentinel2026")
             cursor.execute("""
                 INSERT INTO stations (
@@ -215,7 +217,7 @@ def batch_create_presets(presets: List[PresetStationItem], admin_user: Dict[str,
                 p.name.strip(),
                 username,
                 pwd_hash,
-                p.password or "sentinel2026",
+                "",
                 p.lat,
                 p.lon,
                 p.elevation or 0.0,
@@ -259,7 +261,6 @@ def get_station_by_id(station_id: str, current_user: Dict[str, Any] = Depends(ge
             station_id=row["station_id"],
             station_name=row["station_name"],
             username=row["username"],
-            access_key=row["access_key"] if "access_key" in row.keys() and row["access_key"] else "sentinel2026",
             latitude=row["latitude"],
             longitude=row["longitude"],
             elevation=row["elevation"],
@@ -367,7 +368,7 @@ def reset_station_password(station_id: str, payload: ResetPasswordRequest, admin
                 detail=f"Weather station '{target_id}' not found."
             )
         
-        cursor.execute("UPDATE stations SET password_hash = ?, access_key = ?, updated_at = ? WHERE station_id = ?", (new_hash, payload.new_password, now_iso, target_id))
+        cursor.execute("UPDATE stations SET password_hash = ?, access_key = ?, updated_at = ? WHERE station_id = ?", (new_hash, "", now_iso, target_id))
         
         return {
             "success": True,

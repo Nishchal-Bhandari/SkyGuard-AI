@@ -7,18 +7,33 @@
 const API_ROOT = import.meta.env.VITE_API_BASE_URL ? import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '') : '';
 const API_BASE = `${API_ROOT}/api/v1`;
 
+export function isTokenExpired(token) {
+  try {
+    const parts = token?.split('.');
+    if (parts?.length !== 3) return true;
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    const now = Math.floor(Date.now() / 1000);
+    return !Number.isInteger(payload.exp) || payload.exp <= now ||
+      !Number.isInteger(payload.iat) || payload.iat > now + 60 || payload.iat < now - 7 * 24 * 3600;
+  } catch {
+    return true;
+  }
+}
+
 class ApiClient {
   constructor() {
     this.token = null;
+    this.tokenInvalidated = false;
     this.syncTokenFromStorage();
   }
 
   syncTokenFromStorage() {
+    if (this.tokenInvalidated) return null;
     try {
       const savedAuth = localStorage.getItem("skyguard_auth_v3") || localStorage.getItem("skyguard_auth_v2");
       if (savedAuth) {
         const parsed = JSON.parse(savedAuth);
-        if (parsed && parsed.token) {
+        if (parsed && parsed.token && !isTokenExpired(parsed.token)) {
           this.token = parsed.token;
           return this.token;
         }
@@ -28,16 +43,19 @@ class ApiClient {
   }
 
   getToken() {
+    if (this.tokenInvalidated) return null;
     if (this.token) return this.token;
     return this.syncTokenFromStorage();
   }
 
   setToken(token) {
     this.token = token;
+    this.tokenInvalidated = false;
   }
 
   clearToken() {
     this.token = null;
+    this.tokenInvalidated = true;
   }
 
   async request(endpoint, options = {}) {
@@ -69,12 +87,17 @@ class ApiClient {
           this.clearToken();
           window.dispatchEvent(new CustomEvent("skyguard:session-expired", { detail: { endpoint } }));
         }
-        throw new Error(errorDetail);
+        const error = new Error(errorDetail);
+        error.status = response.status;
+        throw error;
       }
 
       return data;
     } catch (err) {
-      console.warn(`[ApiClient] Error on ${endpoint}:`, err.message);
+      // Invalid login is an expected user-facing response, not a client fault.
+      if (!(endpoint.startsWith('/auth/') && err.status === 401)) {
+        console.warn(`[ApiClient] Error on ${endpoint}:`, err.message);
+      }
       throw err;
     }
   }
@@ -93,6 +116,10 @@ class ApiClient {
 
   async getFleetLiveState() {
     return await this.request("/stations/fleet/live");
+  }
+
+  async getBackendHealth() {
+    return this.get('/health');
   }
 
   async getEsp32Latest(stationId = "AWS-01") {
@@ -208,6 +235,10 @@ class ApiClient {
     } else {
       throw new Error("Invalid payload: Expected File object or array of telemetry records");
     }
+  }
+
+  async replayTelemetryBatch(stationId, rows) {
+    return this.post(`/stations/${encodeURIComponent(stationId)}/telemetry/batch`, rows);
   }
 
   async getStationTelemetryStats(stationId) {

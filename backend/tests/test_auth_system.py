@@ -59,7 +59,7 @@ class TestSkyGuardAuthSystem(unittest.TestCase):
                 if not cur.fetchone():
                     cur.execute("""
                         INSERT INTO stations (station_id, station_name, username, password_hash, access_key, latitude, longitude, elevation, region, status, created_by, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, 'sentinel2026', 17.0, 78.0, 500, 'Test Region', 'ACTIVE', 'test', ?, ?)
+                        VALUES (?, ?, ?, ?, '', 17.0, 78.0, 500, 'Test Region', 'ACTIVE', 'test', ?, ?)
                     """, (st_id, st_name, uname, pwd_hash, now_iso, now_iso))
                 else:
                     cur.execute("""
@@ -97,7 +97,7 @@ class TestSkyGuardAuthSystem(unittest.TestCase):
             admin = cursor.fetchone()
             self.assertIsNotNone(admin)
             self.assertEqual(admin["status"], "ACTIVE")
-            self.assertTrue(admin["password_hash"].startswith("pbkdf2:sha256:100000$"))
+            self.assertTrue(admin["password_hash"].startswith("$argon2id$"))
             self.assertTrue(verify_password("sentinel2026", admin["password_hash"]))
 
             # Verify auto-seeded preset stations
@@ -169,7 +169,7 @@ class TestSkyGuardAuthSystem(unittest.TestCase):
             cursor.execute("SELECT password_hash FROM stations WHERE station_id = 'AWS-88'")
             st_db = cursor.fetchone()
             self.assertIsNotNone(st_db)
-            self.assertTrue(st_db["password_hash"].startswith("pbkdf2:sha256:100000$"))
+            self.assertTrue(st_db["password_hash"].startswith("$argon2id$"))
             self.assertNotIn("securePassword@2026", st_db["password_hash"])
             self.assertTrue(verify_password("securePassword@2026", st_db["password_hash"]))
         

@@ -70,7 +70,8 @@ export const FleetMap = () => {
     stations.forEach(st => {
       const isTarget = st.id === activeStationId;
       let pinClass = "normal";
-      if (st.status === "SUSPECT") pinClass = "suspect";
+      if (!st.source_timestamp || st.status === "INACTIVE") pinClass = "awaiting";
+      else if (st.status === "SUSPECT") pinClass = "suspect";
       else if (st.status === "CRITICAL" || st.status === "LOCALIZED_ANOMALY" || st.status === "REJECTED") pinClass = "critical";
       else if (st.status === "EXTREME" || st.status === "REGIONAL_EVENT") pinClass = "extreme";
 
@@ -98,10 +99,10 @@ export const FleetMap = () => {
           ${st.id} - ${st.name} ${isTarget ? '<span style="color: #ffaa00;">[SELECTED TARGET]</span>' : ''}
         </div>
         <div>Region: <strong style="color: #94a3b8;">${st.region || 'Local'}</strong></div>
-        <div>Status: <span style="color: ${st.status === 'NORMAL' ? '#00ff66' : (st.status === 'SUSPECT' ? '#ffaa00' : (st.status === 'REGIONAL_EVENT' || st.status === 'EXTREME' ? '#a855f7' : '#ff0055'))}; font-weight: bold;">${st.status}</span></div>
-        <div>Temp: ${st.sensors.temperature.value}°C | Hum: ${st.sensors.humidity.value}%</div>
+        <div>Status: <span style="color: ${!st.source_timestamp || st.status === 'INACTIVE' ? '#94a3b8' : st.status === 'NORMAL' ? '#00ff66' : (st.status === 'SUSPECT' ? '#ffaa00' : (st.status === 'REGIONAL_EVENT' || st.status === 'EXTREME' ? '#a855f7' : '#ff0055'))}; font-weight: bold;">${st.status}</span></div>
+        <div>Temp: ${st.sensors?.temperature?.value == null ? '—' : st.sensors.temperature.value + '°C'} | Hum: ${st.sensors?.humidity?.value == null ? '—' : st.sensors.humidity.value + '%'}</div>
         <div>Model: <span style="color: #a855f7;">${st.ml_model?.model_id || 'Rules Only'}</span></div>
-        <div>Spatial Assessment: <span style="color: #00f0ff;">${st.final_assessment?.classification || 'NORMAL'}</span></div>
+        <div>Spatial Assessment: <span style="color: #00f0ff;">${st.final_assessment?.classification || 'Awaiting observation'}</span></div>
       `;
 
       const selectBtn = document.createElement('button');

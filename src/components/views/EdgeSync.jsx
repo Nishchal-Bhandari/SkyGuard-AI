@@ -1,20 +1,33 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useWeather } from '../../context/WeatherContext';
 import { tacticalAudio } from '../../utils/audio';
 
 export const EdgeSync = () => {
-  const { offlineBuffer, isOfflineMode, toggleOfflineMode, syncOfflineBuffer, activeStationId, liveApiStatus = {} } = useWeather();
+  const { offlineBuffer, isOfflineMode, toggleOfflineMode, syncOfflineBuffer, queueOfflineRecords, activeStationId, liveApiStatus = {} } = useWeather();
+  const [syncMessage, setSyncMessage] = useState('');
 
-  const handleSync = () => {
+  const handleSync = async () => {
     tacticalAudio.playClick();
-    const count = syncOfflineBuffer();
-    tacticalAudio.playSuccess();
-    alert(`Replayed ${count} buffered telemetry frames with idempotent deduplication.`);
+    try {
+      const result = await syncOfflineBuffer();
+      setSyncMessage(`${result.acknowledged} acknowledged; ${result.pending} still pending.`);
+    } catch (error) { setSyncMessage(error.message); }
   };
 
   const handleToggle = () => {
     tacticalAudio.playClick();
     toggleOfflineMode();
+  };
+
+  const handleFile = async (event) => {
+    try {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      if (file.size > 1024 * 1024) throw new Error('JSON file must be under 1 MB.');
+      const count = queueOfflineRecords(JSON.parse(await file.text()));
+      setSyncMessage(`${count} records saved to this browser for later replay.`);
+    } catch (error) { setSyncMessage(error.message); }
+    event.target.value = '';
   };
 
   const connectionState = isOfflineMode ? 'OFFLINE' : (liveApiStatus?.isOnline ? 'ONLINE' : 'STANDBY');
@@ -45,6 +58,9 @@ export const EdgeSync = () => {
         </div>
       </div>
       <div className="cyber-card-body">
+        {syncMessage && <p role="status">{syncMessage}</p>}
+        <label>Queue timestamped JSON observations for {activeStationId || 'the selected station'} <input type="file" accept="application/json,.json" onChange={handleFile} /></label>
+        <p>ESP32 frames are stored and replayed on the device; this browser queue contains only JSON files added here.</p>
         {/* Operational Status Strip */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginBottom: '16px' }}>
           <div style={{ background: 'rgba(10,15,29,0.85)', border: '1px solid var(--border-subtle)', borderRadius: '4px', padding: '10px 14px' }}>

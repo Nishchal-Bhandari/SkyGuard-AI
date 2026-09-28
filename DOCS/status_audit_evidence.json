@@ -1,0 +1,52 @@
+{
+  "generated_at": "2026-09-28T18:14:44.196471+00:00",
+  "scope": "Disposable SQLite tests, frontend compilation and source-level checks in this workspace",
+  "checks": {
+    "backend_and_ml_tests": {
+      "passed": true,
+      "exit_code": 0,
+      "summary": "........................................................................ [ 96%]\n...                                                                      [100%]\n75 passed in 26.68s",
+      "passed_count": 75
+    },
+    "frontend_production_build": {
+      "passed": true,
+      "exit_code": 0,
+      "summary": "vite v6.4.3 building for production...\ntransforming...\n\u00e2\u0153\u201c 67 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   1.34 kB \u00e2\u201d\u201a gzip:   0.72 kB\ndist/assets/index-2yLvwB1o.css   30.86 kB \u00e2\u201d\u201a gzip:   6.08 kB\ndist/assets/index-Cf0WIf46.js   739.94 kB \u00e2\u201d\u201a gzip: 219.01 kB\n\u00e2\u0153\u201c built in 3.75s\n\nnpm notice run skyguard-ai-react@1.0.0 build\nnpm notice run vite build\n\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit."
+    },
+    "diff_whitespace": {
+      "passed": true,
+      "exit_code": 0,
+      "summary": "i/v1/stations.py', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'backend/app/api/v1/telemetry.py', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'backend/app/auth/security.py', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'backend/app/main.py', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'backend/app/services/model_storage.py', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'backend/app/services/training_service.py', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'backend/app/services/weather_service.py', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'backend/app/storage/database.py', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'backend/tests/test_auth_system.py', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'backend/tests/test_telemetry_pipeline.py', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'ml/feature_engine.py', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'ml/sensor_health.py', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'requirements.txt', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'src/components/views/StationCredentials.jsx', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'src/context/AuthContext.jsx', CRLF will be replaced by LF the next time Git touches it"
+    }
+  },
+  "definition_of_done": {
+    "met_with_collected_test_evidence": [
+      1,
+      3,
+      6,
+      7,
+      8,
+      9,
+      10,
+      12
+    ],
+    "partial_or_unverified": [
+      2,
+      4,
+      5,
+      11,
+      13,
+      14,
+      15
+    ],
+    "strict_evidence_completion_percent": 53.3,
+    "note": "This is an unweighted acceptance-evidence count, not a measure of lines of code or operational readiness."
+  },
+  "external_validation": {
+    "postgresql_migrations_and_integration": "NOT_VERIFIED",
+    "esp32_hardware_compile_and_disconnect_reboot_replay": "NOT_VERIFIED",
+    "browser_role_workflows": "NOT_VERIFIED",
+    "field_accuracy_and_load_benchmarks": "NOT_VERIFIED",
+    "two_full_demo_rehearsals_and_backup_restore": "NOT_VERIFIED"
+  }
+}

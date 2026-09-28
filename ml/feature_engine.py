@@ -1,156 +1,87 @@
-#!/usr/bin/env python3
-"""
-SkyGuard-AI — Feature Engine (v2)
-Builds the 8-D residual-first feature space.
-"""
-
+﻿"""Shared, causal 12-feature contract for training and live inference."""
+import datetime as dt
 import math
-from typing import Dict, Any, List, Tuple
+import statistics
+from ml.climatology_engine import climatology_engine
 from ml.thermo_engine import thermo_engine
 
+PARAMETERS = (("temperature", "temp"), ("humidity", "hum"), ("pressure", "pres"))
+
+
+def instant(value):
+    parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed.replace(tzinfo=dt.timezone.utc) if parsed.tzinfo is None else parsed.astimezone(dt.timezone.utc)
+
+
+def readiness(rows):
+    times = sorted({instant(r["timestamp"]) for r in rows if r.get("timestamp")})
+    days = {t.date() for t in times}
+    seasons = {(t.year, (t.month - 1) // 3) for t in times}
+    tier = "COLD_START"
+    if len(times) >= 72:
+        tier = "BASELINE"
+    if len(times) >= 720 and len(days) >= 14:
+        tier = "TRAINED"
+    if len(times) >= 4380 and len(days) >= 14 and len(seasons) >= 2:
+        tier = "MATURE"
+    return {"tier": tier, "observation_count": len(times), "distinct_days": len(days), "seasons": len(seasons)}
+
+
+def valid_core(row):
+    bounds = ((-50, 60), (0, 100), (300, 1200))
+    try:
+        values = [float(row.get(short, row.get(long))) for long, short in PARAMETERS]
+        return all(math.isfinite(v) and lo <= v <= hi for v, (lo, hi) in zip(values, bounds))
+    except (TypeError, ValueError):
+        return False
+
+
 class FeatureEngine:
-    def __init__(self):
-        self.feature_names = [
-            "z_T",          # climatology-normalised residual z-scores
-            "z_H",
-            "z_P",
-            "z_dpd",        # dew-point depression z-score
-            "p_elev_resid", # pressure elevation residual
-            "var3",         # 3-observation rolling variance
-            "persist",      # consecutive-anomaly count
-            "z_T_lag1",     # lagged temperature residual
-            "hour_phase"    # sin(2πh/24) cyclic phase
+    feature_names = ["z_T", "z_H", "z_P", "dz_T", "dz_H", "dz_P", "z_dpd", "p_elev_resid", "var3", "persist", "z_T_lag1", "hour_phase"]
+
+    def residuals(self, row, climate):
+        when = instant(row["timestamp"])
+        hour = when.hour + when.minute / 60
+        out = []
+        for long, short in PARAMETERS:
+            c = climate[long]
+            expected = climatology_engine.compute_expected(c["coefficients"], hour, when.timetuple().tm_yday)
+            out.append((float(row.get(short, row.get(long))) - expected) / max(float(c["robust_sigma"]), 0.1))
+        return out
+
+    def fit_stats(self, rows, elevation):
+        dpd = [r["temp"] - thermo_engine.dew_point(r["temp"], r["hum"]) for r in rows]
+        pressure = [r["pres"] - thermo_engine.expected_hypsometric_pressure(elevation) for r in rows]
+        return {"feature_space_version": 2, "feature_names": self.feature_names, "dpd_mean": statistics.mean(dpd),
+                "dpd_std": max(statistics.pstdev(dpd), 0.1), "p_elev_mean": statistics.mean(pressure),
+                "p_elev_std": max(statistics.pstdev(pressure), 0.1), "elevation": elevation}
+
+    def transform(self, row, climate, stats, history=()):
+        z = self.residuals(row, climate)
+        previous = [r for r in history if r["timestamp"] < row["timestamp"] and valid_core(r)][-12:]
+        prior_z = [self.residuals(r, climate) for r in previous]
+        prev = prior_z[-1] if prior_z else z
+        window = [v[0] for v in prior_z[-2:]] + [z[0]]
+        persistence = 0
+        for vector in reversed(prior_z + [z]):
+            if max(abs(v) for v in vector) < 2:
+                break
+            persistence += 1
+        temp, hum, pres = [float(row.get(short, row.get(long))) for long, short in PARAMETERS]
+        dpd = temp - thermo_engine.dew_point(temp, hum)
+        pe = pres - thermo_engine.expected_hypsometric_pressure(stats["elevation"])
+        when = instant(row["timestamp"])
+        return z + [z[i] - prev[i] for i in range(3)] + [
+            (dpd - stats["dpd_mean"]) / stats["dpd_std"],
+            (pe - stats["p_elev_mean"]) / stats["p_elev_std"], statistics.pvariance(window),
+            float(persistence), prev[0], math.sin(2 * math.pi * (when.hour + when.minute / 60) / 24),
         ]
 
-    def _extract_val(self, obs: Dict[str, Any], keys: List[str], default: float) -> float:
-        for k in keys:
-            if k in obs and obs[k] is not None and obs[k] != "":
-                try:
-                    return float(obs[k])
-                except (ValueError, TypeError):
-                    pass
-        return default
-
-    def engineer_features_v2(self, valid_rows: List[Dict[str, Any]], climatology_results: Dict[str, Any], target_elev: float = 0.0) -> Tuple[List[List[float]], Dict[str, Any]]:
-        """
-        Engineers v2 feature vectors for a historical dataset using the fitted climatology.
-        Returns the feature matrix X and normalization stats.
-        """
+    def engineer_features_v2(self, valid_rows, climatology_results, target_elev=0.0):
         if not valid_rows:
             return [], {}
+        stats = self.fit_stats(valid_rows, target_elev)
+        return [self.transform(r, climatology_results, stats, valid_rows[max(0, i-12):i]) for i, r in enumerate(valid_rows)], stats
 
-        X = []
-        n = len(valid_rows)
-        
-        # We need stats for standardizing the derived features (z_dpd, p_elev_resid, var3, z_T_lag1)
-        z_dpds = []
-        p_elev_resids = []
-        
-        # Precompute expected values for each observation
-        from ml.climatology_engine import climatology_engine
-        
-        # Prepare arrays for rolling stats
-        z_T_series = []
-        z_H_series = []
-        z_P_series = []
-        
-        for obs in valid_rows:
-            import datetime
-            ts = str(obs.get("timestamp", ""))
-            try:
-                dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                day_of_year = dt.timetuple().tm_yday
-            except Exception:
-                day_of_year = 1
-            hour = float(obs.get("hour", 12))
-            
-            temp = self._extract_val(obs, ["temp", "temperature", "temperature_c"], 25.0)
-            hum = self._extract_val(obs, ["hum", "humidity", "humidity_pct"], 60.0)
-            pres = self._extract_val(obs, ["pres", "pressure", "pressure_hpa"], 1010.0)
-            
-            # Compute z_T, z_H, z_P
-            def get_z(param, val, day_of_year, hour):
-                if param in climatology_results:
-                    c = climatology_results[param]
-                    exp = climatology_engine.compute_expected(c["coefficients"], hour, day_of_year)
-                    return (val - exp) / max(c["robust_sigma"], 1e-6)
-                return 0.0
-                
-            z_T = get_z("temperature", temp, day_of_year, hour)
-            z_H = get_z("humidity", hum, day_of_year, hour)
-            z_P = get_z("pressure", pres, day_of_year, hour)
-            
-            z_T_series.append(z_T)
-            z_H_series.append(z_H)
-            z_P_series.append(z_P)
-            
-            # dpd
-            dpd = max(0.0, temp - thermo_engine.dew_point(temp, hum))
-            z_dpds.append(dpd)
-            
-            # p_elev_resid
-            expected_p = thermo_engine.expected_hypsometric_pressure(target_elev)
-            p_elev_resids.append(pres - expected_p)
 
-        # Standardize dpd and p_elev_resid
-        def calc_stats(arr):
-            mean = sum(arr) / len(arr) if arr else 0.0
-            std = math.sqrt(sum((x - mean)**2 for x in arr) / len(arr)) if arr else 1.0
-            return mean, max(std, 1e-6)
-            
-        dpd_mean, dpd_std = calc_stats(z_dpds)
-        p_elev_mean, p_elev_std = calc_stats(p_elev_resids)
-        
-        stats = {
-            "dpd_mean": dpd_mean, "dpd_std": dpd_std,
-            "p_elev_mean": p_elev_mean, "p_elev_std": p_elev_std,
-            "feature_space_version": 2
-        }
-
-        # Build feature vectors
-        persist_count = 0
-        for i in range(n):
-            hour = float(valid_rows[i].get("hour", 12))
-            hour_phase = math.sin(2 * math.pi * hour / 24.0)
-            
-            z_T = z_T_series[i]
-            z_H = z_H_series[i]
-            z_P = z_P_series[i]
-            
-            # var3: 3-observation rolling variance of z_T
-            if i >= 2:
-                window = z_T_series[i-2:i+1]
-                mean_w = sum(window)/3
-                var3 = sum((x - mean_w)**2 for x in window)/3
-            else:
-                var3 = 0.0
-                
-            # persist: consecutive anomalies (rough heuristic here: |z_T| > 2)
-            if abs(z_T) > 2.0:
-                persist_count += 1
-            else:
-                persist_count = 0
-                
-            z_T_lag1 = z_T_series[i-1] if i > 0 else z_T
-            
-            z_dpd = (z_dpds[i] - dpd_mean) / dpd_std
-            p_elev_resid = (p_elev_resids[i] - p_elev_mean) / p_elev_std
-            
-            # Keep it strictly to the 8 required features for IF backward compat if wanted, 
-            # or use the full 9 v2 features. Actually, v2 specifies 12 features, but 
-            # the design doc lists 8 in the feature_names above. Let's use 8 for now.
-            x_vec = [
-                round(z_T, 3),
-                round(z_H, 3),
-                round(z_P, 3),
-                round(z_dpd, 3),
-                round(p_elev_resid, 3),
-                round(var3, 3),
-                round(z_T_lag1, 3),
-                round(hour_phase, 3)
-            ]
-            X.append(x_vec)
-            
-        return X, stats
-        
 feature_engine = FeatureEngine()

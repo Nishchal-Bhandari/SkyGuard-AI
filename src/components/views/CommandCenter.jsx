@@ -135,6 +135,8 @@ export const CommandCenter = () => {
             <select className="cyber-input" style={{ padding: '4px 8px', width: 'auto', fontSize: '0.74rem' }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
               <option value="ALL">ALL</option>
               <option value="NORMAL">NORMAL</option>
+              <option value="AWAITING_DATA">AWAITING DATA</option>
+              <option value="INACTIVE">INACTIVE</option>
               <option value="LOCALIZED_ANOMALY">ANOMALOUS</option>
               <option value="SUSPECT">SUSPECT</option>
               <option value="REGIONAL_EVENT">REGIONAL_EVENT</option>
@@ -176,12 +178,14 @@ export const CommandCenter = () => {
                 </thead>
                 <tbody>
                   {filteredStations.map(st => {
-                    const badge = st.status === 'NORMAL' ? 'badge-normal' : (st.status === 'REGIONAL_EVENT' ? 'badge-extreme' : (st.status === 'SUSPECT' ? 'badge-suspect' : 'badge-critical'));
-                    const rootCause = st.root_cause_diagnosis?.root_cause || st.final_assessment?.root_cause || 'NOMINAL';
-                    const shi = st.sensor_health?.overall_health_score ?? 100;
-                    const tFlag = st.sensors?.temperature?.wmo_flag ?? 0;
-                    const hFlag = st.sensors?.humidity?.wmo_flag ?? 0;
-                    const pFlag = st.sensors?.pressure?.wmo_flag ?? 0;
+                    const hasObservation = Boolean(st.source_timestamp);
+                    const badge = !hasObservation || st.status === 'INACTIVE' ? 'badge-offline' : st.status === 'NORMAL' ? 'badge-normal' : (st.status === 'REGIONAL_EVENT' ? 'badge-extreme' : (st.status === 'SUSPECT' ? 'badge-suspect' : 'badge-critical'));
+                    const rootCause = hasObservation ? (st.root_cause_diagnosis?.root_cause || st.final_assessment?.root_cause || 'NOMINAL') : 'No assessed observation yet';
+                    const shi = hasObservation ? st.sensor_health?.overall_health_score : null;
+                    const tFlag = hasObservation ? st.sensors?.temperature?.wmo_flag : null;
+                    const hFlag = hasObservation ? st.sensors?.humidity?.wmo_flag : null;
+                    const pFlag = hasObservation ? st.sensors?.pressure?.wmo_flag : null;
+                    const reading = sensor => hasObservation && sensor?.value != null ? `${sensor.value} ${sensor.unit || ''}` : '—';
 
                     return (
                       <tr key={st.id || st.station_id}>
@@ -189,7 +193,7 @@ export const CommandCenter = () => {
                         <td>
                           <div style={{ fontWeight: 600 }}>{st.name || st.station_name}</div>
                           <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                            {st.region} • {st.latitude?.toFixed(2)}°N, {st.longitude?.toFixed(2)}°E ({st.elevation || 0}m)
+                            {st.region} • {Number(st.lat ?? st.latitude ?? 0).toFixed(2)}°N, {Number(st.lon ?? st.longitude ?? 0).toFixed(2)}°E ({st.elevation ?? 0}m)
                           </div>
                         </td>
                         <td>
@@ -200,26 +204,26 @@ export const CommandCenter = () => {
                         </td>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 'bold', color: shi >= 80 ? 'var(--neon-green)' : (shi >= 50 ? 'var(--neon-amber)' : 'var(--neon-red)') }}>
-                              {shi}%
+                            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 'bold', color: shi == null ? 'var(--text-muted)' : shi >= 80 ? 'var(--neon-green)' : (shi >= 50 ? 'var(--neon-amber)' : 'var(--neon-red)') }}>
+                              {shi == null ? '—' : `${shi}%`}
                             </span>
-                            <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
-                              ({st.sensor_health?.predictive_maintenance?.degradation_projection_days ?? 180}d projection)
-                            </span>
+                            {shi != null && st.sensor_health?.predictive_maintenance?.degradation_projection_days != null && <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                              ({st.sensor_health.predictive_maintenance.degradation_projection_days}d projection)
+                            </span>}
                           </div>
                         </td>
                         <td>
                           <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', display: 'flex', gap: '4px' }}>
-                            <span style={{ color: getWmoFlagColor(tFlag) }}>T:{tFlag}</span>
-                            <span style={{ color: getWmoFlagColor(hFlag) }}>H:{hFlag}</span>
-                            <span style={{ color: getWmoFlagColor(pFlag) }}>P:{pFlag}</span>
+                            <span style={{ color: getWmoFlagColor(tFlag) }}>T:{tFlag ?? '—'}</span>
+                            <span style={{ color: getWmoFlagColor(hFlag) }}>H:{hFlag ?? '—'}</span>
+                            <span style={{ color: getWmoFlagColor(pFlag) }}>P:{pFlag ?? '—'}</span>
                           </div>
                         </td>
                         <td style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>
-                          {st.sensors?.temperature?.value} {st.sensors?.temperature?.unit}
+                          {reading(st.sensors?.temperature)}
                         </td>
-                        <td style={{ fontFamily: 'var(--font-mono)' }}>{st.sensors?.humidity?.value} {st.sensors?.humidity?.unit}</td>
-                        <td style={{ fontFamily: 'var(--font-mono)' }}>{st.sensors?.pressure?.value} {st.sensors?.pressure?.unit}</td>
+                        <td style={{ fontFamily: 'var(--font-mono)' }}>{reading(st.sensors?.humidity)}</td>
+                        <td style={{ fontFamily: 'var(--font-mono)' }}>{reading(st.sensors?.pressure)}</td>
                         <td>
                           <button className="cyber-btn btn-sm" onClick={() => handleViewModel(st.id || st.station_id)}>
                             <i className="fa-solid fa-radar"></i> Inspect Station

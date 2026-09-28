@@ -63,11 +63,11 @@ export const Topbar = ({ onToggleMobileSidebar }) => {
       <div className="topbar-right" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         {/* Open-Meteo Live API Status Badge */}
         <div className="telemetry-ticker">
-          <div className="ticker-item" title={lastSync ? `Last synced with Open-Meteo at ${lastSync}` : 'Open-Meteo Live Data Feed'}>
+          <div className="ticker-item" title={lastSync ? `Last backend fleet check at ${lastSync}` : 'Backend fleet telemetry'}>
             <span className={`pulse-dot ${isOnline ? 'pulse-green' : 'pulse-amber'}`}></span>
-            <span style={{ color: 'var(--neon-cyan)', fontWeight: 700 }}>OPEN-METEO API:</span>
-            <span id="live-stream-status" style={{ color: isOnline ? '#00ff66' : '#ffb703', fontWeight: 600 }}>
-              {isSyncing ? 'SYNCING...' : isOnline ? `LIVE (${latencyMs}ms)` : 'STANDBY'}
+            <span style={{ color: 'var(--neon-cyan)', fontWeight: 700 }}>FLEET DATA:</span>
+            <span id="live-stream-status" style={{ color: isOnline && liveApiStatus.hasObservations ? '#00ff66' : '#ffb703', fontWeight: 600 }}>
+              {isSyncing ? 'SYNCING...' : isOnline ? (liveApiStatus.hasObservations ? `LIVE (${latencyMs}ms)` : 'AWAITING DATA') : 'STANDBY'}
             </span>
           </div>
           {lastSync && (

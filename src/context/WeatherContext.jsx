@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+﻿import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import {
   SEED_STATIONS,
   SEED_INCIDENTS,
@@ -16,13 +16,14 @@ import { openMeteoService, OPEN_METEO_PRESET_STATIONS } from '../utils/openMeteo
 import { tacticalAudio } from '../utils/audio';
 import { useAuth } from './AuthContext';
 import { apiClient } from '../utils/apiClient';
+import { reconcileStationRoster, mergeLiveAssessments } from '../utils/stationState';
 
 const STATIONS_CACHE_KEY = "skyguard_stations_cache_v5";
 const INCIDENTS_CACHE_KEY = "skyguard_incidents_cache_v5";
 const WeatherContext = createContext(null);
 
 export const WeatherProvider = ({ children }) => {
-  const { session, role, assignedStationId, stationCredentials } = useAuth();
+  const { session, role, assignedStationId, stationCredentials, stationCredentialsLoaded, batchRegisterStationCredentials } = useAuth();
 
   const isStationOperator = useCallback((r) => r === 'station_operator' || r === 'STATION_OPERATOR', []);
   const isCentralAdmin = useCallback((r) => r === 'admin' || r === 'CENTRAL_ADMIN', []);
@@ -36,7 +37,11 @@ export const WeatherProvider = ({ children }) => {
       const saved = localStorage.getItem(STATIONS_CACHE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return isStationOperator(role) && assignedStationId
+            ? parsed.filter(station => station.id === assignedStationId)
+            : parsed;
+        }
       }
     } catch (e) {}
     return [];
@@ -93,7 +98,7 @@ export const WeatherProvider = ({ children }) => {
   // Live Open-Meteo API Streaming State
   const [isLiveApiMode, setIsLiveApiMode] = useState(true);
   const [liveApiStatus, setLiveApiStatus] = useState({
-    isOnline: true,
+    isOnline: false,
     latencyMs: 0,
     lastSync: null,
     isSyncing: false,
@@ -104,7 +109,15 @@ export const WeatherProvider = ({ children }) => {
   const [modelDrift, setModelDrift] = useState(() => ({ ...INITIAL_MODEL_DRIFT }));
   const [externalDataLineage] = useState(() => [...EXTERNAL_DATA_LINEAGE]);
   const [checklists, setChecklists] = useState(() => JSON.parse(JSON.stringify(INITIAL_CHECKLISTS)));
-  const [offlineBuffer, setOfflineBuffer] = useState([]);
+  const [offlineBuffer, setOfflineBuffer] = useState(() => {
+    try {
+      const rows = JSON.parse(localStorage.getItem('skyguard_offline_queue_v1') || '[]');
+      return Array.isArray(rows) ? rows : [];
+    } catch { return []; }
+  });
+  useEffect(() => {
+    localStorage.setItem('skyguard_offline_queue_v1', JSON.stringify(offlineBuffer));
+  }, [offlineBuffer]);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [activeFaults, setActiveFaults] = useState({}); // stationId -> { type, ticksRemaining, offset }
 
@@ -118,38 +131,10 @@ export const WeatherProvider = ({ children }) => {
     return 'command-center';
   });
 
-  // Synchronize stations state with authoritative database stationCredentials
+  // Do not treat the initial empty credential array as an empty server roster.
   useEffect(() => {
-    if (Array.isArray(stationCredentials)) {
-      setStations(prev => {
-        return stationCredentials.map(sc => {
-          const existing = prev.find(p => p.id === sc.stationId);
-          return {
-            id: sc.stationId,
-            name: sc.stationName,
-            region: sc.region || "Local Microclimate",
-            lat: sc.lat || 0,
-            lon: sc.lon || 0,
-            elevation: sc.elevation || 0,
-            status: sc.status || "NORMAL",
-            battery: existing?.battery ?? 12.6,
-            signal: existing?.signal ?? -70,
-            uptime_s: existing?.uptime_s ?? 3600,
-            firmware: existing?.firmware ?? "v2.1.0",
-            last_seen: existing?.last_seen ?? new Date().toISOString(),
-            sensors: existing?.sensors ?? {
-              temperature: { value: 25.0, unit: "°C", quality: "ACCEPTED" },
-              humidity: { value: 60.0, unit: "%", quality: "ACCEPTED" },
-              pressure: { value: 1012.0, unit: "hPa", quality: "ACCEPTED" },
-              wind_speed: { value: 8.0, unit: "km/h", quality: "ACCEPTED" },
-              wind_direction: { value: 180, unit: "deg", quality: "ACCEPTED" },
-              rainfall: { value: 0.0, unit: "mm", quality: "ACCEPTED" },
-              solar: { value: 500.0, unit: "W/m²", quality: "ACCEPTED" }
-            },
-            trusted_peers: existing?.trusted_peers ?? []
-          };
-        });
-      });
+    if (session?.isAuthenticated && isCentralAdmin(role) && stationCredentialsLoaded) {
+      setStations(prev => reconcileStationRoster(prev, stationCredentials));
 
       // Ensure every provisioned station has its own station-specific maintenance checklist
       setChecklists(prev => {
@@ -163,7 +148,7 @@ export const WeatherProvider = ({ children }) => {
         return next;
       });
     }
-  }, [stationCredentials]);
+  }, [session?.isAuthenticated, role, stationCredentialsLoaded, stationCredentials, isCentralAdmin]);
 
   // Save stations cache to localStorage
   useEffect(() => {
@@ -207,10 +192,12 @@ export const WeatherProvider = ({ children }) => {
       if (assignedStationId) {
         setActiveStationId(assignedStationId);
       }
-    } else if (!activeStationId && stations.length > 0) {
+    } else if (stations.length > 0 && !stations.some(station => station.id === activeStationId)) {
       setActiveStationId(stations[0].id);
+    } else if (stationCredentialsLoaded && stations.length === 0 && activeStationId) {
+      setActiveStationId(null);
     }
-  }, [stations, activeStationId, role, assignedStationId, isStationOperator]);
+  }, [stations, activeStationId, role, assignedStationId, stationCredentialsLoaded, isStationOperator]);
 
   // Sync active model for activeStationId from Cloud PostgreSQL backend
   const refreshActiveStationModel = useCallback(async (stId) => {
@@ -279,7 +266,7 @@ export const WeatherProvider = ({ children }) => {
    */
   const syncLiveOpenMeteoData = useCallback(async (customStations = null) => {
     setLiveApiStatus(prev => ({ ...prev, isSyncing: true, error: null }));
-    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const started = performance.now();
 
     try {
       const res = await apiClient.getFleetLiveState();
@@ -296,15 +283,17 @@ export const WeatherProvider = ({ children }) => {
           model_status: st.ml_model ? "ACTIVE_PRODUCTION" : "PENDING_CALIBRATION"
         }));
         
-        setStations(updatedStations);
+        setStations(prev => mergeLiveAssessments(prev, updatedStations));
         
         // Append to history
         setHistory(prevHist => {
           const nextHist = { ...prevHist };
           updatedStations.forEach(st => {
             if (!nextHist[st.id]) nextHist[st.id] = [];
+            if (!st.source_timestamp || nextHist[st.id].some(point => point.source_timestamp === st.source_timestamp)) return;
             nextHist[st.id] = [...nextHist[st.id], {
-              time: nowStr,
+              time: new Date(st.source_timestamp).toLocaleTimeString(),
+              source_timestamp: st.source_timestamp,
               temperature: st.sensors.temperature.value,
               humidity: st.sensors.humidity.value,
               pressure: st.sensors.pressure.value,
@@ -328,7 +317,8 @@ export const WeatherProvider = ({ children }) => {
         
         setLiveApiStatus({
           isOnline: true,
-          latencyMs: 85,
+          hasObservations: updatedStations.length > 0,
+          latencyMs: Math.round(performance.now() - started),
           lastSync: new Date().toLocaleTimeString(),
           isSyncing: false,
           error: null,
@@ -339,6 +329,7 @@ export const WeatherProvider = ({ children }) => {
       console.error("[WeatherContext] Error fetching fleet state:", err);
       setLiveApiStatus(prev => ({
         ...prev,
+        isOnline: false,
         isSyncing: false,
         error: "Failed to connect to backend telemetry service."
       }));
@@ -376,68 +367,18 @@ export const WeatherProvider = ({ children }) => {
           }
 
           if (stationData) {
-            const st = {
-              id: stationData.station_id || assignedStationId,
-              name: stationData.station_name || session.stationName || `${assignedStationId} Weather Unit`,
-              region: stationData.region || "Assigned Region",
-              lat: parseFloat(stationData.latitude ?? stationData.lat ?? 17.3850),
-              lon: parseFloat(stationData.longitude ?? stationData.lon ?? 78.4867),
-              elevation: parseFloat(stationData.elevation ?? 500),
-              status: "NORMAL",
-              battery: 12.6,
-              signal: -72,
-              uptime_s: 3600,
-              firmware: "v2.1.0-OM",
-              last_seen: new Date().toISOString(),
-              sensors: {
-                temperature: { value: 25.0, unit: "°C", quality: "ACCEPTED" },
-                humidity: { value: 60.0, unit: "%", quality: "ACCEPTED" },
-                pressure: { value: 1012.0, unit: "hPa", quality: "ACCEPTED" },
-                wind_speed: { value: 8.0, unit: "km/h", quality: "ACCEPTED" },
-                wind_direction: { value: 180, unit: "deg", quality: "ACCEPTED" },
-                rainfall: { value: 0.0, unit: "mm", quality: "ACCEPTED" },
-                solar: { value: 500.0, unit: "W/m²", quality: "ACCEPTED" }
-              },
-              trusted_peers: []
-            };
-
-            setStations(prev => {
-              const others = prev.filter(s => s.id !== st.id);
-              return [st, ...others];
-            });
-            setActiveStationId(st.id);
-            syncLiveOpenMeteoData([st]);
-          }
-        } else if (isCentralAdmin(role)) {
-          // Admin: fetch all stations from SQLite backend
-          const backendStations = await apiClient.listStations();
-          if (backendStations && backendStations.length > 0) {
-            const formatted = backendStations.map(s => ({
-              id: s.station_id,
-              name: s.station_name,
-              region: s.region,
-              lat: parseFloat(s.latitude),
-              lon: parseFloat(s.longitude),
-              elevation: parseFloat(s.elevation),
-              status: "NORMAL",
-              battery: 12.6,
-              signal: -72,
-              uptime_s: 3600,
-              firmware: "v2.1.0-OM",
-              last_seen: new Date().toISOString(),
-              sensors: {
-                temperature: { value: 25.0, unit: "°C", quality: "ACCEPTED" },
-                humidity: { value: 60.0, unit: "%", quality: "ACCEPTED" },
-                pressure: { value: 1012.0, unit: "hPa", quality: "ACCEPTED" },
-                wind_speed: { value: 8.0, unit: "km/h", quality: "ACCEPTED" },
-                wind_direction: { value: 180, unit: "deg", quality: "ACCEPTED" },
-                rainfall: { value: 0.0, unit: "mm", quality: "ACCEPTED" },
-                solar: { value: 500.0, unit: "W/m²", quality: "ACCEPTED" }
-              },
-              trusted_peers: []
-            }));
-            setStations(formatted);
-            syncLiveOpenMeteoData(formatted);
+            const id = stationData.station_id || assignedStationId;
+            setStations(prev => reconcileStationRoster(prev.filter(st => st.id === id), [{
+              stationId: id,
+              stationName: stationData.station_name || session.stationName || (id + ' Weather Unit'),
+              region: stationData.region,
+              lat: stationData.latitude ?? stationData.lat,
+              lon: stationData.longitude ?? stationData.lon,
+              elevation: stationData.elevation,
+              status: stationData.status
+            }]));
+            setActiveStationId(id);
+            syncLiveOpenMeteoData();
           }
         }
         // Immediately hydrate authoritative incidents on mount/reload
@@ -465,37 +406,14 @@ export const WeatherProvider = ({ children }) => {
    * One-Click Instant Load of Real Indian AWS Fleet
    */
   const loadPresetFleet = async () => {
-    if (!OPEN_METEO_PRESET_STATIONS || OPEN_METEO_PRESET_STATIONS.length === 0) return;
-    const formatted = OPEN_METEO_PRESET_STATIONS.map(p => ({
-      id: p.id,
-      name: p.name,
-      region: p.region,
-      lat: p.lat,
-      lon: p.lon,
-      elevation: p.elevation,
-      status: "NORMAL",
-      battery: 12.6,
-      signal: -72,
-      uptime_s: 3600,
-      firmware: "v2.1.0-OM",
-      last_seen: new Date().toISOString(),
-      sensors: {
-        temperature: { value: 25.0, unit: "°C", quality: "ACCEPTED" },
-        humidity: { value: 60.0, unit: "%", quality: "ACCEPTED" },
-        pressure: { value: 1012.0, unit: "hPa", quality: "ACCEPTED" },
-        wind_speed: { value: 8.0, unit: "km/h", quality: "ACCEPTED" },
-        wind_direction: { value: 180, unit: "deg", quality: "ACCEPTED" },
-        rainfall: { value: 0.0, unit: "mm", quality: "ACCEPTED" },
-        solar: { value: 500.0, unit: "W/m²", quality: "ACCEPTED" }
-      },
-      trusted_peers: []
-    }));
+    if (!OPEN_METEO_PRESET_STATIONS?.length) return false;
+    const registered = await batchRegisterStationCredentials(OPEN_METEO_PRESET_STATIONS);
+    if (!registered) return false;
 
-    setStations(formatted);
-    setActiveStationId(formatted[0].id);
-    batchRegisterStationCredentials(OPEN_METEO_PRESET_STATIONS);
+    setActiveStationId(OPEN_METEO_PRESET_STATIONS[0].id);
     tacticalAudio.playSuccess();
-    await syncLiveOpenMeteoData(formatted);
+    await syncLiveOpenMeteoData();
+    return true;
   };
 
   // Fetch from backend every 5 seconds only when authenticated
@@ -518,9 +436,45 @@ export const WeatherProvider = ({ children }) => {
     });
   };
 
-  const syncOfflineBuffer = () => {
-    setOfflineBuffer([]);
-    tacticalAudio.playSuccess();
+  const queueOfflineRecords = (records) => {
+    if (!Array.isArray(records) || !records.length || records.length > 200) {
+      throw new Error('Choose a JSON array containing 1 to 200 observations.');
+    }
+    const normalized = records.map(row => {
+      if (!row || typeof row !== 'object' || !(row.stationId || row.station_id || activeStationId)) {
+        throw new Error('Select a station and provide object observations.');
+      }
+      const stationId = String(row.stationId || row.station_id || activeStationId).toUpperCase();
+      if (isStationOperator(role) && stationId !== assignedStationId) throw new Error('Observation belongs to another station.');
+      if (!row.timestamp && !row.source_timestamp && !row.time) throw new Error('Every observation needs its source timestamp.');
+      return { ...row, stationId };
+    });
+    if (offlineBuffer.length + normalized.length > 500) throw new Error('Browser queue limit is 500 records.');
+    setOfflineBuffer(current => [...current, ...normalized]);
+    return normalized.length;
+  };
+
+  const syncOfflineBuffer = async () => {
+    if (isOfflineMode) throw new Error('Gateway is offline. Reconnect before replay.');
+    const snapshot = offlineBuffer;
+    let acknowledged = 0;
+    const remaining = [];
+    for (const stationId of [...new Set(snapshot.map(row => row.stationId))]) {
+      const rows = snapshot.filter(row => row.stationId === stationId);
+      try {
+        const result = await apiClient.replayTelemetryBatch(stationId, rows.map(({ stationId: ignored, ...row }) => row));
+        result.results.forEach((ack, index) => {
+          if (ack.acknowledged) acknowledged++;
+          else remaining.push(rows[index]);
+        });
+      } catch (error) {
+        remaining.push(...rows);
+        setLiveApiStatus(prev => ({ ...prev, error: `Replay failed: ${error.message}` }));
+      }
+    }
+    setOfflineBuffer(current => [...remaining, ...current.filter(row => !snapshot.includes(row))]);
+    if (acknowledged) tacticalAudio.playSuccess();
+    return { acknowledged, pending: remaining.length };
   };
 
   const injectFault = async (stationId, faultType, offset = 0) => {
@@ -750,44 +704,24 @@ export const WeatherProvider = ({ children }) => {
   };
 
   const registerStation = (newStationData) => {
-    const createdStation = {
-      id: newStationData.id,
-      name: newStationData.name || newStationData.id,
-      region: newStationData.region || "Assigned Region",
-      lat: newStationData.lat !== undefined ? parseFloat(newStationData.lat) : 17.3850,
-      lon: newStationData.lon !== undefined ? parseFloat(newStationData.lon) : 78.4867,
-      elevation: newStationData.elevation !== undefined ? parseFloat(newStationData.elevation) : 500,
-      status: "NORMAL",
-      battery: 12.6,
-      signal: -75,
-      uptime_s: 0,
-      firmware: "v2.1.0-OM",
-      last_seen: new Date().toISOString(),
-      sensors: {
-        temperature: { value: 28.5, unit: "°C", quality: "ACCEPTED" },
-        humidity: { value: 65.0, unit: "%", quality: "ACCEPTED" },
-        pressure: { value: 1008.0, unit: "hPa", quality: "ACCEPTED" },
-        wind_speed: { value: 12.0, unit: "km/h", quality: "ACCEPTED" },
-        wind_direction: { value: 200, unit: "deg", quality: "ACCEPTED" },
-        rainfall: { value: 0.0, unit: "mm", quality: "ACCEPTED" },
-        solar: { value: 450.0, unit: "W/m²", quality: "ACCEPTED" }
-      },
-      trusted_peers: []
+    const credential = {
+      stationId: newStationData.id,
+      stationName: newStationData.name || newStationData.id,
+      region: newStationData.region,
+      lat: newStationData.lat,
+      lon: newStationData.lon,
+      elevation: newStationData.elevation,
+      status: newStationData.status || 'ACTIVE'
     };
-
     setStations(prev => {
-      const existing = prev.find(s => s.id === createdStation.id);
-      if (existing) return prev.map(s => s.id === createdStation.id ? createdStation : s);
-      return [...prev, createdStation];
+      const existing = prev.find(station => station.id === newStationData.id);
+      const updated = reconcileStationRoster(existing ? [existing] : [], [credential])[0];
+      return existing
+        ? prev.map(station => station.id === updated.id ? updated : station)
+        : [...prev, updated];
     });
-
-    if (!activeStationId) {
-      setActiveStationId(createdStation.id);
-    }
-
-    setTimeout(() => {
-      syncLiveOpenMeteoData([createdStation]);
-    }, 300);
+    if (!activeStationId) setActiveStationId(newStationData.id);
+    syncLiveOpenMeteoData();
   };
 
   const deleteStation = (stationId) => {
@@ -822,6 +756,7 @@ export const WeatherProvider = ({ children }) => {
       isOfflineMode,
       toggleOfflineMode,
       syncOfflineBuffer,
+      queueOfflineRecords,
       injectFault,
       clearFaults,
       adjudicateIncident,

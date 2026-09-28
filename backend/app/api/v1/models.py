@@ -59,7 +59,7 @@ def train_station_model(
     except ValueError as ve:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(ve)
+            detail={"code": str(ve).split(":")[0], "message": str(ve), "eligibility": getattr(ve, "eligibility", None)}
         )
     except Exception as e:
         raise HTTPException(
@@ -79,7 +79,7 @@ def get_training_job_status(
     clean_id = station_id.strip().upper()
     require_station_access(clean_id, current_user)
     job = get_training_job(job_id)
-    if not job:
+    if not job or str(job.get("station_id", "")).upper() != clean_id:
         raise HTTPException(status_code=404, detail="Training job not found")
         
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -203,18 +203,9 @@ def rollback_station_model(
     """
     clean_id = station_id.strip().upper()
     try:
-        res = rollback_model_version(clean_id, model_version)
-        return res
-    except ValueError as ve:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(ve)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Rollback failed: {str(e)}"
-        )
+        return training_service.activate(clean_id, model_version)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.post("/stations/{station_id}/models/{model_version}/promote")
@@ -230,44 +221,11 @@ def promote_station_model(
       - metrics JSON must contain "validation_score" >= 0.85
     """
     clean_id = station_id.strip().upper()
-    with get_db() as conn:
-        cur = conn.cursor()
-        # Fetch target model record
-        cur.execute("""
-            SELECT id, metrics FROM model_registry
-            WHERE station_id = ? AND model_version = ?
-        """, (clean_id, model_version))
-        target = cur.fetchone()
-        if not target:
-            raise HTTPException(status_code=404, detail="Model version not found")
-        # Parse metrics JSON safely
-        try:
-            metrics_value = target["metrics"]
-            metrics = json.loads(metrics_value) if isinstance(metrics_value, str) else (metrics_value or {})
-            validation_score = float(metrics.get("validation_score"))
-        except (TypeError, ValueError, json.JSONDecodeError, AttributeError):
-            validation_score = float("nan")
-        if not math.isfinite(validation_score) or not 0.85 <= validation_score <= 1.0:
-            raise HTTPException(status_code=400, detail="Model does not meet promotion validation_score >= 0.85")
-        # Archive any currently active model
-        cur.execute("""
-            UPDATE model_registry
-            SET status = 'ARCHIVED'
-            WHERE station_id = ? AND status = 'ACTIVE'
-        """, (clean_id,))
-        # Promote target model
-        cur.execute("""
-            UPDATE model_registry
-            SET status = 'ACTIVE'
-            WHERE id = ?
-        """, (target["id"],))
-        conn.commit()
-    return {
-        "success": True,
-        "station_id": clean_id,
-        "promoted_version": model_version,
-        "message": "Model promoted to ACTIVE"
-    }
+    try:
+        return training_service.activate(clean_id, model_version)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
 
 @router.post("/stations/{station_id}/score")
 def score_realtime_telemetry(

@@ -8,7 +8,7 @@ from backend.app.storage.database import (
     clear_all_active_faults,
     clear_all_incidents
 )
-from backend.app.api.v1.auth import get_current_user
+from backend.app.api.v1.auth import get_current_user, require_admin, require_station_access
 from backend.app.services.weather_service import weather_service
 from backend.app.config import DEMO_MODE
 
@@ -17,9 +17,11 @@ router = APIRouter(tags=["Fault Injection"])
 
 @router.post("/stations/fleet/faults/reset")
 def reset_fleet(
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(require_admin)
 ):
     """Reset the complete deterministic demo fleet to a clean normal state."""
+    if not DEMO_MODE:
+        raise HTTPException(status_code=403, detail="Fault controls require DEMO_MODE")
     cleared_faults = clear_all_active_faults()
     cleared_incidents = clear_all_incidents()
     weather_service.reevaluate()
@@ -42,6 +44,7 @@ def inject_fault(
     Injects a synthetic fault for the specified station.
     """
     clean_id = station_id.strip().upper()
+    require_station_access(clean_id, current_user)
 
     if not DEMO_MODE:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Synthetic fault injection is disabled outside DEMO_MODE.")
@@ -83,6 +86,7 @@ def reset_fault(
     Resets/clears any active fault for the specified station.
     """
     clean_id = station_id.strip().upper()
+    require_station_access(clean_id, current_user)
 
     if not DEMO_MODE:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Synthetic fault reset is disabled outside DEMO_MODE.")
@@ -117,6 +121,7 @@ def get_fault_status(
     Returns the current active fault for the station, if any.
     """
     clean_id = station_id.strip().upper()
+    require_station_access(clean_id, current_user)
     fault = get_active_fault(clean_id)
     
     return {

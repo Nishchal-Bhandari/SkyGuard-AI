@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { apiClient } from '../utils/apiClient';
+import { apiClient, isTokenExpired } from '../utils/apiClient';
 
 const STORAGE_KEY = "skyguard_auth_v3";
 
@@ -13,7 +13,7 @@ export const AuthProvider = ({ children }) => {
       const data = localStorage.getItem(STORAGE_KEY);
       if (data) {
         const parsed = JSON.parse(data);
-        if (parsed && parsed.token) {
+        if (parsed && parsed.token && !isTokenExpired(parsed.token)) {
           apiClient.setToken(parsed.token);
           return parsed;
         }
@@ -31,6 +31,7 @@ export const AuthProvider = ({ children }) => {
 
   const [stationCredentials, setStationCredentials] = useState([]);
   const [isLoadingStations, setIsLoadingStations] = useState(false);
+  const [stationCredentialsLoaded, setStationCredentialsLoaded] = useState(false);
 
   // Synchronize session to localStorage
   useEffect(() => {
@@ -57,7 +58,6 @@ export const AuthProvider = ({ children }) => {
         stationId: s.station_id,
         stationName: s.station_name,
         username: s.username,
-        password: s.access_key || s.password || "sentinel2026",
         region: s.region,
         lat: s.latitude,
         lon: s.longitude,
@@ -68,6 +68,7 @@ export const AuthProvider = ({ children }) => {
         last_login: s.last_login
       }));
       setStationCredentials(mapped);
+      setStationCredentialsLoaded(true);
     } catch (err) {
       console.warn("[AuthContext] Failed to load stations from SQLite:", err.message);
     } finally {
@@ -131,6 +132,7 @@ export const AuthProvider = ({ children }) => {
       token: null
     });
     setStationCredentials([]);
+    setStationCredentialsLoaded(false);
   };
 
   // A backend 401 on any authenticated route means the token is missing, expired, or
@@ -231,7 +233,6 @@ export const AuthProvider = ({ children }) => {
     }
     try {
       await apiClient.resetStationPassword(stationId, newPassword);
-      setStationCredentials(prev => prev.map(s => s.stationId === stationId ? { ...s, password: newPassword } : s));
       return true;
     } catch (err) {
       alert(`Failed to reset password: ${err.message}`);
@@ -264,6 +265,7 @@ export const AuthProvider = ({ children }) => {
       assignedStationId: session.assignedStationId,
       stationName: session.stationName,
       stationCredentials,
+      stationCredentialsLoaded,
       isLoadingStations,
       refreshStationList,
       login,      logout,

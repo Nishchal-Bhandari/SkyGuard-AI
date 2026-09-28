@@ -20,6 +20,10 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
+#include <LittleFS.h>
+#include <Preferences.h>
+#include <time.h>
+#include <sys/time.h>
 #include <math.h>
 #include <string.h>
 
@@ -290,6 +294,65 @@ EdgeAIResult lastResult;
 int totalPacketsSent = 0;
 int successfulDispatches = 0;
 String lastServerResponse = "None";
+String lastSourceTimestamp = "";
+Preferences queueSettings;
+uint32_t queueHead = 0;
+uint32_t queueTail = 0;
+bool storageReady = false;
+unsigned long nextReplayAt = 0;
+const uint32_t MAX_PENDING_FRAMES = 64;
+
+String queuePath(uint32_t sequence) { return "/frame_" + String(sequence) + ".json"; }
+
+String sourceTimeUTC() {
+    struct timeval now;
+    gettimeofday(&now, nullptr);
+    if (now.tv_sec < 1700000000) return "";
+    struct tm utc;
+    gmtime_r(&now.tv_sec, &utc);
+    char result[25];
+    strftime(result, sizeof(result), "%Y-%m-%dT%H:%M:%S", &utc);
+    char timestamp[32];
+    snprintf(timestamp, sizeof(timestamp), "%s.%03ldZ", result, now.tv_usec / 1000);
+    return String(timestamp);
+}
+
+bool submitFrame(const String& payload) {
+    if (WiFi.status() != WL_CONNECTED || strlen(SKYGUARD_STATION_DEVICE_KEY) == 0) return false;
+    HTTPClient http;
+    if (!http.begin(DESTINATION_SERVER_URL)) return false;
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("X-Station-Key", SKYGUARD_STATION_DEVICE_KEY);
+    http.setTimeout(8000);
+    totalPacketsSent++;
+    int code = http.POST(payload);
+    String response = code >= 200 && code < 300 ? http.getString() : "";
+    bool acknowledged = code >= 200 && code < 300 && response.indexOf("\"acknowledged\":true") >= 0;
+    lastServerResponse = "HTTP " + String(code);
+    http.end();
+    if (acknowledged) successfulDispatches++;
+    return acknowledged;
+}
+
+void replayPendingFrame() {
+    if (!storageReady || queueHead == queueTail || millis() < nextReplayAt) return;
+    nextReplayAt = millis() + 5000;
+    String path = queuePath(queueHead);
+    File file = LittleFS.open(path, "r");
+    if (!file) {
+        // A missing file after a power loss is explicitly skipped; later frames remain intact.
+        queueHead++;
+        queueSettings.putUInt("head", queueHead);
+        return;
+    }
+    String payload = file.readString();
+    file.close();
+    if (submitFrame(payload)) {
+        LittleFS.remove(path);
+        queueHead++;
+        queueSettings.putUInt("head", queueHead);
+    }
+}
 
 // ============================================================================
 // 4. FORWARD DECLARATIONS
@@ -313,6 +376,18 @@ void setup() {
     Serial.println("========================================================");
 
     lastResult = edgeEngine.evaluate(currentInput);
+    storageReady = LittleFS.begin(false);
+    if (storageReady) {
+        queueSettings.begin("skyguard", false);
+        queueHead = queueSettings.getUInt("head", 0);
+        queueTail = queueSettings.getUInt("tail", 0);
+        while (LittleFS.exists(queuePath(queueTail))) {
+            queueTail++;
+            queueSettings.putUInt("tail", queueTail);
+        }
+    } else {
+        Serial.println("[QUEUE] LittleFS unavailable; telemetry input disabled to avoid data loss.");
+    }
 
     // Wi-Fi Initialization
     Serial.printf("[WIFI] Connecting to '%s'...\n", WIFI_SSID);
@@ -337,6 +412,7 @@ void setup() {
         Serial.print("[WIFI] AP IP Address: http://");
         Serial.println(WiFi.softAPIP());
     }
+    configTime(0, 0, "pool.ntp.org", "time.google.com");
 
     // Web Server Endpoints with CORS
     server.on("/", HTTP_GET, handleRoot);
@@ -364,6 +440,7 @@ void setup() {
 // ============================================================================
 void loop() {
     server.handleClient();
+    replayPendingFrame();
 }
 
 // ============================================================================
@@ -419,6 +496,15 @@ void handleStatus() {
 void handleSensorInput() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
     server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+    if (!storageReady || queueTail - queueHead >= MAX_PENDING_FRAMES) {
+        server.send(507, "application/json", "{\"error\":\"DURABLE_QUEUE_FULL_OR_UNAVAILABLE\"}");
+        return;
+    }
+    lastSourceTimestamp = sourceTimeUTC();
+    if (lastSourceTimestamp.isEmpty()) {
+        server.send(503, "application/json", "{\"error\":\"SOURCE_CLOCK_NOT_SYNCHRONIZED\"}");
+        return;
+    }
 
     if (server.hasArg("plain")) {
         String body = server.arg("plain");
@@ -484,36 +570,18 @@ void handleSensorInput() {
 // 11. DISPATCH TELEMETRY VIA HTTP POST
 // ============================================================================
 void dispatchToDestination(const EdgeAIResult& res) {
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[DISPATCH] Wi-Fi offline. Buffering telemetry on edge.");
-        return;
-    }
-
-    if (strlen(SKYGUARD_STATION_DEVICE_KEY) == 0) {
-        Serial.println("[DISPATCH] Station device key is not configured. Copy secrets.example.h to secrets.h and provision a key.");
-        return;
-    }
-
-    totalPacketsSent++;
-    HTTPClient http;
-    http.begin(DESTINATION_SERVER_URL);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("X-Station-Key", SKYGUARD_STATION_DEVICE_KEY);
-    http.setTimeout(8000);
-
     String payload = serializeEdgeResultJSON(res);
-    int httpCode = http.POST(payload);
-
-    if (httpCode > 0) {
-        successfulDispatches++;
-        lastServerResponse = "HTTP " + String(httpCode);
-        Serial.printf("[DISPATCH SUCCESS] Packet #%u sent to PC -> Response: HTTP %d\n", res.seq_num, httpCode);
-    } else {
-        lastServerResponse = "Error: " + http.errorToString(httpCode);
-        Serial.printf("[DISPATCH FAILED] Error: %s (Is SkyGuard backend running on port 8000?)\n", 
-                      http.errorToString(httpCode).c_str());
+    String path = queuePath(queueTail);
+    File file = LittleFS.open(path, "w");
+    if (!file || file.print(payload) != payload.length()) {
+        Serial.println("[QUEUE] Persistent write failed. Frame was not dispatched.");
+        if (file) file.close();
+        return;
     }
-    http.end();
+    file.close();
+    queueTail++;
+    queueSettings.putUInt("tail", queueTail);
+    replayPendingFrame();
 }
 
 // ============================================================================
@@ -521,6 +589,7 @@ void dispatchToDestination(const EdgeAIResult& res) {
 // ============================================================================
 String serializeEdgeResultJSON(const EdgeAIResult& res) {
     String json = "{";
+    json += "\"source_timestamp\":\"" + lastSourceTimestamp + "\",";
     json += "\"seq\":" + String(res.seq_num) + ",";
     json += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
     json += "\"station_id\":\"" + String(STATION_ID) + "\",";

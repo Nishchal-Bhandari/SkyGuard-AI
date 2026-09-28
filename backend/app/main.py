@@ -1,11 +1,12 @@
+import os
 import logging
 import asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from backend.app.config import IS_POSTGRES, ALLOWED_ORIGINS
-from backend.app.storage.database import init_db
+from backend.app.config import IS_POSTGRES, ALLOWED_ORIGINS, DEMO_MODE
+from backend.app.storage.database import init_db, get_db
 
 from backend.app.api.v1.auth import router as auth_router
 from backend.app.api.v1.stations import router as stations_router
@@ -29,14 +30,19 @@ async def lifespan(app: FastAPI):
     logger.info(f"Database schema initialized successfully ({db_type}).")
     
     # Start Background Weather Poller
-    weather_task = asyncio.create_task(weather_service.poll_loop())
+    weather_task = asyncio.create_task(weather_service.poll_loop()) if os.getenv("WEATHER_POLL_ENABLED", "true").lower() == "true" else None
     
     yield
     # Shutdown
     logger.info("SkyGuard-AI Backend service shutting down.")
     weather_service.stop()
     try:
-        await asyncio.wait_for(weather_task, timeout=2.0)
+        if weather_task:
+            weather_task.cancel()
+            try:
+                await weather_task
+            except asyncio.CancelledError:
+                pass
     except asyncio.TimeoutError:
         pass
 
@@ -71,12 +77,19 @@ app.include_router(stations_router, prefix="/api/v1")
 
 @app.get("/api/v1/health", tags=["Diagnostics"])
 def health_check():
+    try:
+        with get_db() as conn:
+            conn.cursor().execute("SELECT 1")
+    except Exception as error:
+        logger.warning("Database health check failed: %s", type(error).__name__)
+        raise HTTPException(status_code=503, detail="Database unavailable") from error
     return {
         "status": "ONLINE",
         "service": "SkyGuard-AI Backend",
         "version": "2.1.0",
         "database": "Cloud PostgreSQL / TimescaleDB" if IS_POSTGRES else "SQLite (WAL Mode)",
-        "security": "PBKDF2-HMAC-SHA256 / JWT HS256",
+        "demo_mode": DEMO_MODE,
+        "security": "Argon2id password hashes / JWT HS256",
         "mlops": "Station-Adaptive Isolation Forest"
     }
 
