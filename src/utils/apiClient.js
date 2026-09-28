@@ -89,6 +89,7 @@ class ApiClient {
         }
         const error = new Error(errorDetail);
         error.status = response.status;
+        error.isAuthenticationError = response.status === 401;
         throw error;
       }
 

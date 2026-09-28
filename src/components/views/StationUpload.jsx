@@ -16,7 +16,7 @@ const PIPELINE_STEPS = [
 ];
 
 export const StationUpload = () => {
-  const { role, assignedStationId } = useAuth();
+  const { role, assignedStationId, session } = useAuth();
   const {
     activeStationId,
     stations,
@@ -57,6 +57,8 @@ export const StationUpload = () => {
 
   // Fetch Cloud PostgreSQL telemetry statistics and training jobs on station change
   const refreshStationStats = async (stId) => {
+    if (!session?.isAuthenticated) return;
+
     try {
       const stats = await apiClient.getStationTelemetryStats(stId);
       if (stats.success) {
@@ -64,6 +66,7 @@ export const StationUpload = () => {
       }
     } catch (e) {
       console.warn("[StationUpload] Could not fetch DB stats:", e.message);
+      if (e.isAuthenticationError) return;
     }
 
     try {
@@ -112,17 +115,31 @@ export const StationUpload = () => {
       }
     } catch (e) {
       console.warn("[StationUpload] Could not fetch training jobs:", e.message);
+      if (e.isAuthenticationError) {
+        activePollId.current = null;
+      }
     }
   };
 
   useEffect(() => {
-    if (activeStationId && stations.length > 0) {
+    if (session?.isAuthenticated && activeStationId && stations.length > 0) {
       refreshStationStats(activeStationId);
     }
     return () => {
       activePollId.current = null;
     };
-  }, [activeStationId, stations.length]);
+  }, [activeStationId, stations.length, session?.isAuthenticated]);
+
+  // A page stored in the browser back-forward cache must not keep a stale
+  // training request alive. Vite may report its own HMR WebSocket reconnect;
+  // this stops only application polling and has no effect on the job server-side.
+  useEffect(() => {
+    const stopPollingForPageCache = () => {
+      activePollId.current = null;
+    };
+    window.addEventListener('pagehide', stopPollingForPageCache);
+    return () => window.removeEventListener('pagehide', stopPollingForPageCache);
+  }, []);
 
   if (!stations || stations.length === 0) {
     return (
@@ -293,6 +310,7 @@ export const StationUpload = () => {
   // This declaration stays available when the empty-stations view returns early.
   // The former const initializer was skipped, leaving the refresh effect in its TDZ.
   async function pollTrainingJob(stationId, jobId) {
+    if (!session?.isAuthenticated) return;
     const currentPollId = Symbol('training-poll');
     activePollId.current = currentPollId;
     
@@ -358,6 +376,14 @@ export const StationUpload = () => {
         }
       } catch (e) {
         console.warn("[StationUpload] Polling error:", e.message);
+        if (e.isAuthenticationError || e.status === 401) {
+          // ApiClient has already signalled AuthContext to end the session.
+          // Stop immediately so the next retries do not send an empty header.
+          if (activePollId.current === currentPollId) activePollId.current = null;
+          setPipelineState('IDLE');
+          setErrorMessage('Your session expired. Sign in again to monitor this training job.');
+          return;
+        }
         errorCount += 1;
         if (errorCount >= 5) {
           setPipelineState('ERROR');
