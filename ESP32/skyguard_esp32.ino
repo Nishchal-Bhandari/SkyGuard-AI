@@ -47,7 +47,7 @@ const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"; // <-- Enter your Wi-Fi Passwo
 //
 // To revert to the local test_receiver.py, change the URL to:
 //   "http://<PC_IP>:5000/api/telemetry"
-String DESTINATION_SERVER_URL = "http://10.86.189.68:8000/api/v1/telemetry/esp32/ingest";
+String DESTINATION_SERVER_URL = "http://10.152.113.162:8000/api/v1/telemetry/esp32/ingest";
 
 const char* DEVICE_ID  = "esp32-aws01-edge";
 const char* STATION_ID = "AWS-01";
@@ -318,9 +318,19 @@ String sourceTimeUTC() {
 }
 
 bool submitFrame(const String& payload) {
-    if (WiFi.status() != WL_CONNECTED || strlen(SKYGUARD_STATION_DEVICE_KEY) == 0) return false;
+    if (WiFi.status() != WL_CONNECTED) {
+        lastServerResponse = "Wi-Fi disconnected";
+        return false;
+    }
+    if (strlen(SKYGUARD_STATION_DEVICE_KEY) == 0) {
+        lastServerResponse = "Device key missing";
+        return false;
+    }
     HTTPClient http;
-    if (!http.begin(DESTINATION_SERVER_URL)) return false;
+    if (!http.begin(DESTINATION_SERVER_URL)) {
+        lastServerResponse = "Invalid destination URL";
+        return false;
+    }
     http.addHeader("Content-Type", "application/json");
     http.addHeader("X-Station-Key", SKYGUARD_STATION_DEVICE_KEY);
     http.setTimeout(8000);
