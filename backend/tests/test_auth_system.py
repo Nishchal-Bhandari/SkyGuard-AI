@@ -1,7 +1,11 @@
+import base64
+import hashlib
+import hmac
+import json
 import os
 import sys
-import unittest
 import tempfile
+import unittest
 from pathlib import Path
 
 # Add project root to sys.path
@@ -15,7 +19,14 @@ os.environ["DATABASE_URL"] = f"sqlite:///{temp_db_path}"
 os.environ["SKYGUARD_DB_PATH"] = temp_db_path
 
 from backend.app.storage.database import init_db, get_db
-from backend.app.auth.security import hash_password, verify_password, create_access_token, decode_access_token
+from backend.app.auth.security import (
+    SECRET_KEY,
+    _b64_encode,
+    hash_password,
+    verify_password,
+    create_access_token,
+    decode_access_token,
+)
 from backend.app.api.v1.auth import login_admin, login_station, AdminLoginRequest, StationLoginRequest
 from backend.app.api.v1.stations import (
     create_station, list_stations_admin, get_station_by_id,
@@ -109,6 +120,22 @@ class TestSkyGuardAuthSystem(unittest.TestCase):
         self.assertIsNotNone(payload)
         self.assertEqual(payload["role"], "admin")
         self.assertEqual(payload["sub"], "admin")
+        self.assertIn("jti", payload)
+
+        # Reject expired tokens (exp < now)
+        expired = data["token"].split('.')
+        header = expired[0]
+        payload_json = json.loads(base64.urlsafe_b64decode(expired[1] + '=' * (-len(expired[1]) % 4)))
+        payload_json["exp"] = 1
+        reencoded_payload = _b64_encode(json.dumps(payload_json).encode("utf-8"))
+        signature = _b64_encode(hmac.new(SECRET_KEY.encode("utf-8"), f"{header}.{reencoded_payload}".encode("utf-8"), hashlib.sha256).digest())
+        expired_token = f"{header}.{reencoded_payload}.{signature}"
+        self.assertIsNone(decode_access_token(expired_token))
+
+        # Reject algorithm downgrade to none
+        none_header = _b64_encode(json.dumps({"alg": "none", "typ": "JWT"}).encode("utf-8"))
+        none_token = f"{none_header}.{expired[1]}.{expired[2]}"
+        self.assertIsNone(decode_access_token(none_token))
 
         bad = _client.post("/api/v1/auth/admin/login", json={"username": "admin", "password": "wrongpassword"})
         self.assertEqual(bad.status_code, 401)
@@ -190,6 +217,16 @@ class TestSkyGuardAuthSystem(unittest.TestCase):
         # Bad password
         bad = _c.post("/api/v1/auth/station/login", json={"username": "operator_hyd", "password": "badpassword"})
         self.assertEqual(bad.status_code, 401)
+
+        # Reject tampered token signature
+        parts = data["token"].split('.')
+        forged = f"{parts[0]}{'.'}{parts[1]}{'.'}invalidsig"
+        self.assertIsNone(decode_access_token(forged))
+
+        # Reject algorithm downgrade to none
+        none_header = _b64_encode(json.dumps({"alg": "none", "typ": "JWT"}).encode("utf-8"))
+        none_token = f"{none_header}.{parts[1]}.{parts[2]}"
+        self.assertIsNone(decode_access_token(none_token))
 
         # Deactivate station
         admin_user = {"sub": "admin", "role": "admin"}

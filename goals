@@ -1,0 +1,99 @@
+# SkyGuard-AI — Full Prototype Implementation Goals
+
+## Purpose
+Create a single, execution-ready plan that drives SkyGuard-AI from the current ~65 % completion level to a demonstrably “full prototype” for **Smart India Hackathon 2026, Problem Statement 073**. This document defines the target state, breaks work into themed workstreams, and lists measurable deliverables required for final acceptance.
+
+## Reference Sources
+- [DOCS/specsheet(2).md](DOCS/specsheet(2).md)
+- [DOCS/system_design (1).md](DOCS/system_design%20(1).md)
+- [PROGRESS.md](PROGRESS.md)
+- [acceptance_status.json](acceptance_status.json)
+
+## Definition of “Full Prototype”
+A release qualifies when all **P0 items (§24)** and the core **P1 credibility items** in [DOCS/specsheet(2).md](DOCS/specsheet(2).md#L862-L901) are implemented, verified, and evidenced. Specifically:
+1. Security/authorization hardening completed and auditable.
+2. Source timestamps govern ingestion and temporal logic, with immutable raw telemetry and provenance-preserving self-healing.
+3. Assessments expose quality, severity, classification, readiness, evidence completeness, peer evidence, and root cause (with regional-event safeguards).
+4. Evidence API/UI, demo replay, and historical seeding are production-ready.
+5. Drift monitoring, fusion calibration status, maintenance persistence, and operator workflows reach P1 credibility.
+6. Demo scenarios A (sensor fault) and B (regional weather) are reproducible via deterministic replay.
+7. Acceptance dossier maps every requirement to tests, screenshots/logs, or demo steps; `project_acceptance.status` becomes "PASS".
+
+## Workstreams & Detailed Goals
+Status codes: `TODO`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Owners are placeholders—fill per team roster.
+
+### 1. Security & Platform Hardening (P0)
+| Task | Description | Deliverable | Owner | Status | Target |
+| --- | --- | --- | --- | --- | --- |
+| JWT strict mode | Enforce signature verification before payload trust, reject `alg=none`, require `exp`, `iat`, `jti`, fail closed on malformed tokens. | Updated auth module, regression tests, security checklist ticked. |  | DONE | 2026-09-28 |
+| Secrets hygiene | Move secrets to env, remove plaintext station access key exposure, document rotations. | `.env.example` updates, migration script, audit log entry. |  | TODO |  |
+| RBAC penetration test | Attempt cross-station access, record red/green evidence. | Test script + captured responses, included in acceptance dossier. |  | TODO |  |
+| CORS lockdown | Restrict origins, methods per deployment profile. | Config diff + postman proof. |  | TODO |  |
+| QC endpoint auth bug | Switch to optional token handling where required; add automated regression. | Patch + unit test covering the HUD case. |  | IN_PROGRESS |  |
+
+### 2. Ingestion, Persistence & Audit (P0/P1)
+| Task | Description | Deliverable | Owner | Status | Target |
+| --- | --- | --- | --- | --- | --- |
+| Per-row quarantine ledger | Ensure malformed batch rows are quarantined with reason codes. | Table schema + UI surfacing, exportable report. |  | TODO |  |
+| Idempotent edge replay | Implement edge buffer replay (ESP32 + backend) with idempotency keys. | Integration test showing repeat-safe ingestion. |  | TODO |  |
+| Config & maintenance persistence | Add `config_audit`, `maintenance_tasks`, `maintenance_audit`, `sensor_change_events`, wire UI. | Database migrations, CRUD endpoints, UI write-back. |  | TODO |  |
+| Imputation provenance | Ensure `imputations` table populated with required fields; UI displays provenance. | DB records + HUD panel evidence. |  | TODO |  |
+| Export hashing | Replace placeholder hash with calculated SHA-256 + verification API. | UI screenshot + test verifying hash. |  | TODO |  |
+
+### 3. Detection, Fusion & Drift Intelligence (P0/P1)
+| Task | Description | Deliverable | Owner | Status | Target |
+| --- | --- | --- | --- | --- | --- |
+| Evidence completeness gating | Ensure confidence is capped by evidence completeness; write unit tests. | Code audit + regression test output. |  | TODO |  |
+| Regional-event persistence & dwell | Verify dwell logic, incident idempotency, and no-peer uncertainty. | Scenario replay logs, incident timeline screenshot. |  | TODO |  |
+| Fusion coefficient calibration | Generate labelled injection windows, fit logistic regression, persist to `fusion_coefficients`. | Calibration notebook/report + updated API exposing `fitted` vs `default_priors`. |  | TODO |  |
+| Drift monitoring | Implement `drift_metrics` computation, UI surfacing, alert thresholds. | Cron job/service code + dashboard tile + tests. |  | TODO |  |
+| Health no-penalty enforcement | Confirm regional events do not reduce sensor health. | Automated test + evidence in scenario B replay. |  | TODO |  |
+
+### 4. Explainability, Root Cause & UI Consistency (P0/P1)
+| Task | Description | Deliverable | Owner | Status | Target |
+| --- | --- | --- | --- | --- | --- |
+| Explainability assertions | Ensure non-normal evidence payload non-empty, alternatives always present, SHAP additivity enforced. | Updated test suite + docs. |  | TODO |  |
+| Root-cause suppression | Guarantee sensor-fault hypotheses suppressed for `REGIONAL_EVENT`. | Regression tests + incident screenshot. |  | TODO |  |
+| Evidence panel completion | Validate all required fields per spec §18 appear with correct labels. | Annotated UI capture. |  | DONE |  |
+
+### 5. MLOps & Model Governance (P1)
+| Task | Description | Deliverable | Owner | Status | Target |
+| --- | --- | --- | --- | --- | --- |
+| Model promotion gate | Confirm promotion requires readiness tier, validation, artifact hash. | Checklists + test fixture. |  | TODO |  |
+| Shadow validation reporting | Expose shadow metrics in UI/API. | API payload + screenshot. |  | TODO |  |
+| Auto drift → retrain candidate | Collect drift triggers into `retraining_candidates`; wire approvals. | Scheduler + UI list. |  | TODO |  |
+
+### 6. Frontend & Operator Workflows (P0/P1)
+| Task | Description | Deliverable | Owner | Status | Target |
+| --- | --- | --- | --- | --- | --- |
+| QC rule editor persistence | Enable PUT endpoint + UI save + audit trail. | Working form + db entries + test. |  | TODO |  |
+| Maintenance checklist persistence | Store completions, timestamps, actors; present history. | Backend endpoints + UI timeline. |  | TODO |  |
+| Edge buffer realism | Replace alert demo with actual replay status and error handling. | Replay log, success/failure states demo. |  | TODO |  |
+| Accessibility & latency polish | Meet NFRs: dashboard refresh 5 s, first paint <2 s, accessible contrast. | Lighthouse / perf report. |  | TODO |  |
+
+### 7. Demo & Operations Readiness (P0)
+| Task | Description | Deliverable | Owner | Status | Target |
+| --- | --- | --- | --- | --- | --- |
+| Deterministic replay harness | Script + dataset delivering Scenarios A and B on demand. | `scripts/demo_replay.py`, README, video capture. |  | IN_PROGRESS |  |
+| Backup/restore rehearsal | Perform two full rehearsals, record timings/issues. | Runbook + logs + lessons learned. |  | TODO |  |
+| Historical seed data | Document seed dataset coverage and readiness tiers per station. | Data manifest + verification script. |  | TODO |  |
+| DEMO_MODE safety | Ensure fault injection gated and logged when disabled. | Config proof + test. |  | TODO |  |
+
+### 8. Testing, Evidence & Acceptance Dossier (Cross-cutting)
+| Task | Description | Deliverable | Owner | Status | Target |
+| --- | --- | --- | --- | --- | --- |
+| Requirement mapping | Produce matrix linking each spec clause to code/tests/evidence. | `docs/acceptance_matrix.xlsx` (or Markdown), referenced in dossier. |  | TODO |  |
+| Acceptance automation | Expand tests to cover imputation immutability, export hashing, dwell, health rules. | Updated `pytest` output (>= 45 cases). |  | IN_PROGRESS |  |
+| acceptance_status.json update | Compute `project_acceptance` and set `weighted_score`. | CI job updating file + signed report. |  | TODO |  |
+| Demo script & timing | Written narrative with cues for judges, rehearsal timestamps. | `docs/demo_script.md`. |  | TODO |  |
+
+## Reporting & Governance
+- **Cadence:** Weekly checkpoint reviewing workstream burndown and blocker removal.
+- **RISKS to monitor:** Security bugs, calibration delays, demo data availability, performance regressions.
+- **Success exit criteria:** All tables above marked `DONE`, acceptance dossier published, dry-run demo passes without manual intervention.
+
+## Next Steps
+1. Assign owners and target dates to every `TODO` item within 24 hours.
+2. Launch Security & Platform Hardening workstream immediately (highest SIH scoring impact).
+3. Set up shared tracker (e.g., GitHub Projects) mirroring this document for day-to-day updates.
+4. Schedule full demo rehearsal after Workstreams 1, 2, and 7 reach `DONE` status.
