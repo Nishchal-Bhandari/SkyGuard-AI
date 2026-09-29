@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useWeather } from '../../context/WeatherContext';
 import { DEFAULT_MAINTENANCE_CHECKLIST } from '../../utils/seedData';
 import { tacticalAudio } from '../../utils/audio';
+import { displayCode } from '../../utils/display';
 
 export const StationChecklist = () => {
   const { checklists, updateChecklist, activeStationId, stations, incidents, setCurrentView, submitMaintenanceAudit } = useWeather();
@@ -66,7 +67,7 @@ export const StationChecklist = () => {
           <div style={{ background: 'rgba(10,15,29,0.85)', border: '1px solid var(--border-subtle)', borderRadius: '4px', padding: '10px 12px' }}>
             <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>HARDWARE STATUS</div>
             <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.05rem', color: station.status === 'NORMAL' ? 'var(--neon-green)' : 'var(--neon-amber)', fontWeight: 800 }}>
-              {station.status}
+              {displayCode(station.status)}
             </div>
             <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Signal: {station.signal || -68} dBm</div>
           </div>

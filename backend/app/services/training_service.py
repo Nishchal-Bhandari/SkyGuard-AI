@@ -197,7 +197,7 @@ class StationAdaptiveTrainingService:
         except (ValueError, OSError):
             return {**absent, 'status': 'ARTIFACT_UNAVAILABLE'}
         if not artifact:
-            return absent
+            return {**absent, 'status': 'ARTIFACT_UNAVAILABLE', 'model_id': record['model_id']}
         forest = IsolationForest.from_dict(artifact['model_weights'])
         card = artifact['model_card']
         if artifact.get('schema_version', 1) < 2:

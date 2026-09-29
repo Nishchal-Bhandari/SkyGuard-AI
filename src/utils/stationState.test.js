@@ -51,4 +51,12 @@ test('assessment updates only its station and older polls cannot roll it back', 
 
 test('authoritative empty roster removes stations only after loading', () => {
   assert.deepEqual(reconcileStationRoster([{ id: 'AWS-01' }], []), []);
+  assert.deepEqual(mergeLiveAssessments([{ id: 'AWS-01' }], [], []), []);
+  assert.deepEqual(mergeLiveAssessments([{ id: 'AWS-01' }], [{ station_id: 'AWS-01', status: 'NORMAL' }], []), []);
+});
+
+test('authoritative roster excludes deleted stations even if a stale fleet response contains them', () => {
+  const cached = [{ id: 'AWS-01', source_timestamp: '2026-09-28T08:00:00Z', status: 'NORMAL' }];
+  const staleResponse = [{ station_id: 'AWS-01', source_timestamp: '2026-09-28T09:00:00Z', status: 'NORMAL' }];
+  assert.deepEqual(mergeLiveAssessments(cached, staleResponse, [roster[1]]).map(station => station.id), ['AWS-02']);
 });

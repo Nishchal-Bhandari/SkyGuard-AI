@@ -20,10 +20,27 @@ export const IncidentModal = ({ incident, onClose }) => {
       evidence = {};
     }
   }
-  const modelPred = evidence.model_prediction || {};
-  const spatialEv = evidence.spatial_evidence || {};
-  const sensorQC = evidence.sensor_qc_evidence || {};
   const finalAss = evidence.final_assessment || {};
+  // Pipeline incidents contain a station-state snapshot; older records use *_evidence.
+  const modelPred = evidence.model_prediction || evidence.ml_model || {};
+  const recordedPeers = evidence.spatial_data?.nearby_stations || finalAss.fleet_evidence?.peers || [];
+  const spatialEv = evidence.spatial_evidence || {
+    closest_peer: recordedPeers[0] || null,
+    eligible_peer_count: recordedPeers.length,
+    target_temperature: evidence.sensors?.temperature?.value,
+    spatial_result: finalAss.fleet_evidence?.fleet_evidence_state || 'UNAVAILABLE',
+    agreement_index: evidence.spatial_data?.agreement_index,
+  };
+  const incidentParameter = incident.variable?.split(':')[0];
+  const sensorName = { temp: 'temperature', hum: 'humidity', pres: 'pressure' }[incidentParameter];
+  const observedSensor = sensorName ? evidence.sensors?.[sensorName] : null;
+  const sensorQC = evidence.sensor_qc_evidence || {
+    observed_value: observedSensor?.value,
+    unit: observedSensor?.unit,
+    qc_result: finalAss.evidence_vector?.z_qc == null ? 'UNKNOWN' : finalAss.evidence_vector.z_qc ? 'SUSPECT' : 'PASS',
+    physical_qc: finalAss.evidence_vector?.z_phys == null ? 'UNKNOWN' : finalAss.evidence_vector.z_phys ? 'FAIL' : 'PASS',
+    fault_state: finalAss.root_cause,
+  };
 
   const badgeClass = incident.severity === 'critical' || incident.severity === 'high' ? 'badge-critical' : 'badge-suspect';
   const stateBadge = incident.quality_state === 'LOCALIZED_ANOMALY' 
@@ -34,6 +51,9 @@ export const IncidentModal = ({ incident, onClose }) => {
   const rawPeerId = closestPeer ? (closestPeer.station_id || closestPeer.id) : null;
   const peerStationId = rawPeerId && rawPeerId !== incident.station_id ? rawPeerId : null;
   const peerTemp = closestPeer ? (closestPeer.temperature !== undefined ? closestPeer.temperature : (closestPeer.temp !== undefined ? closestPeer.temp : null)) : null;
+  const peerDistance = closestPeer?.distance_km;
+  const targetTemp = spatialEv.target_temperature;
+  const temperatureDifference = targetTemp != null && peerTemp != null ? Math.abs(targetTemp - peerTemp) : null;
 
   const resolvedActions = (incident.recommended_actions || []).map(act => {
     if (typeof act === 'string' && act.includes('nearest spatial peer network')) {
@@ -106,15 +126,20 @@ export const IncidentModal = ({ incident, onClose }) => {
                       ? 'var(--crimson-alert)' 
                       : (modelPred.status === 'NORMAL' ? 'var(--emerald-success)' : 'var(--text-muted)')
                   }}>
-                    {modelPred.status || (modelPred.has_model ? 'EVALUATED' : 'UNTRAINED')}
+                    {modelPred.status || (modelPred.has_model ? 'EVALUATED' : 'NOT AVAILABLE')}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px', marginTop: '2px' }}>
                   <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Model:</span>
                   <span style={{ color: 'var(--text-secondary)', fontSize: '0.68rem' }}>
-                    {modelPred.model_id || 'None'}
+                    {modelPred.model_id || (modelPred.status === 'ARTIFACT_UNAVAILABLE' ? 'Artifact unavailable' : 'None')}
                   </span>
                 </div>
+                {!modelPred.has_model && evidence.source_timestamp && (
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>
+                    No model score was recorded for this observation. Incident evidence is a source-time snapshot.
+                  </div>
+                )}
               </div>
             </div>
 
@@ -138,18 +163,22 @@ export const IncidentModal = ({ incident, onClose }) => {
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ color: 'var(--text-muted)' }}>Peer Distance:</span>
-                      <span style={{ color: 'var(--text-secondary)' }}>{closestPeer.distance_km} km</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{peerDistance != null ? `${Number(peerDistance).toFixed(1)} km` : 'N/A'}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>Eligible Peers:</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{spatialEv.eligible_peer_count ?? recordedPeers.length} (2 required for consensus)</span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ color: 'var(--text-muted)' }}>Target vs Peer:</span>
                       <span style={{ color: 'var(--text-primary)' }}>
-                        {spatialEv.target_temperature !== undefined ? `${spatialEv.target_temperature}${sensorQC.unit || '°C'}` : 'N/A'} vs {peerTemp !== null ? `${peerTemp}${sensorQC.unit || '°C'}` : 'N/A'}
+                        {targetTemp != null ? `${targetTemp}°C` : 'N/A'} vs {peerTemp != null ? `${peerTemp}°C` : 'N/A'}
                       </span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--text-muted)' }}>Spatial Deviation:</span>
-                      <span style={{ fontWeight: 600, color: spatialEv.spatial_deviation > 3.0 ? 'var(--crimson-alert)' : 'var(--text-primary)' }}>
-                        {spatialEv.spatial_deviation}{sensorQC.unit || '°C'}
+                      <span style={{ color: 'var(--text-muted)' }}>Temperature Difference:</span>
+                      <span style={{ fontWeight: 600, color: temperatureDifference > 3.0 ? 'var(--crimson-alert)' : 'var(--text-primary)' }}>
+                        {temperatureDifference != null ? `${temperatureDifference.toFixed(1)}°C` : 'N/A'}
                       </span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px', marginTop: '2px' }}>
@@ -172,7 +201,7 @@ export const IncidentModal = ({ incident, onClose }) => {
                 ) : (
                   <>
                     <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', padding: '24px 0', textAlign: 'center', lineHeight: '1.5' }}>
-                      No eligible stations within 60 km radius.<br/>Spatial validation unavailable.
+                      No eligible source-time peer observations within 60 km.<br/>Spatial validation unavailable.
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '4px', marginTop: '2px' }}>
                       <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Spatial Result:</span>
@@ -206,7 +235,7 @@ export const IncidentModal = ({ incident, onClose }) => {
                   <span style={{ color: 'var(--text-primary)' }}>
                     {sensorQC.station_normal_min !== null && sensorQC.station_normal_min !== undefined
                       ? `${sensorQC.station_normal_min}${sensorQC.unit || '°C'} – ${sensorQC.station_normal_max}${sensorQC.unit || '°C'}`
-                      : 'Not Calibrated'}
+                      : evidence.sensor_qc_evidence ? 'Not Calibrated' : 'Not recorded'}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>

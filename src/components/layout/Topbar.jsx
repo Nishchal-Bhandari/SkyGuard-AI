@@ -30,17 +30,15 @@ export const Topbar = ({ onToggleMobileSidebar }) => {
     displaySub = info.sub;
   }
 
-  const isOnline = liveApiStatus?.isOnline ?? true;
+  const isOnline = liveApiStatus?.isOnline ?? false;
   const isSyncing = liveApiStatus?.isSyncing ?? false;
   const latencyMs = liveApiStatus?.latencyMs ?? 0;
   const lastSync = liveApiStatus?.lastSync ?? null;
 
   const handleManualSync = async () => {
     tacticalAudio.playClick();
-    if (syncLiveOpenMeteoData) {
-      await syncLiveOpenMeteoData();
-    }
-    tacticalAudio.playSuccess();
+    if (await syncLiveOpenMeteoData?.()) tacticalAudio.playSuccess();
+    else tacticalAudio.playAlarm();
   };
 
   return (
@@ -63,11 +61,11 @@ export const Topbar = ({ onToggleMobileSidebar }) => {
       <div className="topbar-right" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         {/* Open-Meteo Live API Status Badge */}
         <div className="telemetry-ticker">
-          <div className="ticker-item" title={lastSync ? `Last backend fleet check at ${lastSync}` : 'Backend fleet telemetry'}>
+          <div className="ticker-item" title={liveApiStatus.error || (lastSync ? `Last backend fleet check at ${lastSync}` : 'Backend fleet telemetry')}>
             <span className={`pulse-dot ${isOnline ? 'pulse-green' : 'pulse-amber'}`}></span>
             <span style={{ color: 'var(--neon-cyan)', fontWeight: 700 }}>FLEET DATA:</span>
             <span id="live-stream-status" style={{ color: isOnline && liveApiStatus.hasObservations ? '#00ff66' : '#ffb703', fontWeight: 600 }}>
-              {isSyncing ? 'SYNCING...' : isOnline ? (liveApiStatus.hasObservations ? `LIVE (${latencyMs}ms)` : 'AWAITING DATA') : 'STANDBY'}
+              {isSyncing ? 'SYNCING...' : isOnline ? (liveApiStatus.hasObservations ? `CONNECTED (${latencyMs}ms)` : 'AWAITING DATA') : liveApiStatus.error ? 'CONNECTION ERROR' : 'STANDBY'}
             </span>
           </div>
           {lastSync && (
@@ -84,7 +82,7 @@ export const Topbar = ({ onToggleMobileSidebar }) => {
             style={{ padding: '5px 10px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '5px', borderColor: 'var(--neon-cyan)' }}
             onClick={handleManualSync}
             disabled={isSyncing}
-            title="Fetch immediate real-time weather from Open-Meteo API"
+            title="Fetch the latest fleet state from the backend"
           >
             <i className={`fa-solid fa-arrows-rotate text-cyan ${isSyncing ? 'fa-spin' : ''}`}></i>
             <span>{isSyncing ? 'SYNCING' : 'SYNC LIVE'}</span>

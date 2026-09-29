@@ -32,11 +32,14 @@ export function reconcileStationRoster(previous, credentials) {
   });
 }
 
-export function mergeLiveAssessments(previous, assessments) {
-  if (!assessments.length) return previous;
-  const byId = new Map(previous.map(station => [station.id, station]));
+export function mergeLiveAssessments(previous, assessments, credentials = null) {
+  const roster = credentials === null ? previous : reconcileStationRoster(previous, credentials);
+  if (!assessments.length) return roster;
+  const allowedIds = credentials === null ? null : new Set(credentials.map(credential => credential.stationId || credential.station_id));
+  const byId = new Map(roster.map(station => [station.id, station]));
   for (const assessment of assessments) {
     const id = assessment.station_id || assessment.id;
+    if (allowedIds && !allowedIds.has(id)) continue;
     const prior = byId.get(id);
     if (prior?.source_timestamp && assessment.source_timestamp &&
         Date.parse(prior.source_timestamp) > Date.parse(assessment.source_timestamp)) continue;

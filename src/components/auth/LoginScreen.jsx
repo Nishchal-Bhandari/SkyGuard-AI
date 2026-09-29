@@ -167,7 +167,7 @@ export const LoginScreen = () => {
               {loading ? (
                 <>
                   <i className="fa-solid fa-circle-notch fa-spin"></i>
-                  <span>AUTHENTICATING AGAINST SQLITE...</span>
+                  <span>AUTHENTICATING...</span>
                 </>
               ) : (
                 <>

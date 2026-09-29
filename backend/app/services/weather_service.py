@@ -135,14 +135,20 @@ class WeatherService:
             self._publish(result)
 
     def get_fleet_state(self):
-        # Read persistence even after restart or ingestion through another adapter.
+        # The database is authoritative. In-memory state can outlive a station
+        # deletion or a database reset in a running worker.
         with get_db() as conn:
             cur=conn.cursor()
-            cur.execute('SELECT o.assessment_data FROM observations o\n                JOIN station_pipeline_state s ON s.station_id=o.station_id AND s.source_timestamp=o.source_timestamp')
-            states=[json.loads(r['assessment_data']) for r in cur.fetchall()]
-        for state in states:
-            self.live_state[state['station_id']]=state
-        return list(self.live_state.values())
+            cur.execute('SELECT station_id FROM stations')
+            registered={r['station_id'] for r in cur.fetchall()}
+            cur.execute('SELECT o.assessment_data FROM observations o\n                JOIN station_pipeline_state s ON s.station_id=o.station_id AND s.source_timestamp=o.source_timestamp\n                JOIN stations st ON st.station_id=o.station_id')
+            states={state['station_id']:state for r in cur.fetchall() for state in [json.loads(r['assessment_data'])]}
+        self.live_state=states
+        for cache in (self.esp32_latest, self.esp32_history, self._cached_base_readings):
+            for station_id in list(cache):
+                if station_id not in registered:
+                    cache.pop(station_id, None)
+        return list(states.values())
 
     async def _sync_fleet(self,client):
         with get_db() as conn:

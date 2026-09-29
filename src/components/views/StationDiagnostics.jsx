@@ -1,5 +1,6 @@
 import React from 'react';
 import { useWeather } from '../../context/WeatherContext';
+import { displayCode } from '../../utils/display';
 
 export const StationDiagnostics = () => {
   const { stations, activeStationId, setCurrentView } = useWeather();
@@ -37,7 +38,7 @@ export const StationDiagnostics = () => {
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{station.id} — {station.name}</span>
           <span className={`cyber-badge ${station.status === 'NORMAL' ? 'badge-normal' : 'badge-suspect'}`}>
-            {station.status}
+            {displayCode(station.status)}
           </span>
         </div>
       </div>

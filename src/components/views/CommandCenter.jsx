@@ -1,6 +1,7 @@
 import React from 'react';
 import { useWeather } from '../../context/WeatherContext';
 import { tacticalAudio } from '../../utils/audio';
+import { displayCode } from '../../utils/display';
 
 export const CommandCenter = () => {
   const {
@@ -57,7 +58,9 @@ export const CommandCenter = () => {
                 SKYGUARD AI — FLEET INTELLIGENCE & SENSOR HEALTH MATRIX
               </div>
               <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                Monitoring {stations.length} Automatic Weather Stations | Thermodynamic Verification & Real-Time Imputation Active
+                {stations.length === 0
+                  ? 'No stations provisioned. Add a station to begin monitoring.'
+                  : `Monitoring ${stations.length} Automatic Weather Stations | Thermodynamic Verification & Real-Time Imputation Active`}
               </div>
             </div>
           </div>
@@ -139,7 +142,7 @@ export const CommandCenter = () => {
               <option value="INACTIVE">INACTIVE</option>
               <option value="LOCALIZED_ANOMALY">ANOMALOUS</option>
               <option value="SUSPECT">SUSPECT</option>
-              <option value="REGIONAL_EVENT">REGIONAL_EVENT</option>
+              <option value="REGIONAL_EVENT">REGIONAL EVENT</option>
             </select>
             <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginLeft: '10px' }}>Severity:</span>
             <select className="cyber-input" style={{ padding: '4px 8px', width: 'auto', fontSize: '0.74rem' }} value={filterRootCause} onChange={e => setFilterRootCause(e.target.value)}>
@@ -157,7 +160,7 @@ export const CommandCenter = () => {
             <div style={{ padding: '36px 20px', textAlign: 'center', background: 'rgba(5,8,17,0.7)', borderRadius: '4px' }}>
               <i className="fa-solid fa-tower-broadcast" style={{ fontSize: '2.2rem', color: 'var(--neon-cyan)', marginBottom: '12px', opacity: 0.8 }}></i>
               <div style={{ fontFamily: 'var(--font-tactical)', fontSize: '1rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
-                NO STATIONS MATCH FILTER
+                {safeStations.length === 0 ? 'NO STATIONS PROVISIONED' : 'NO STATIONS MATCH FILTER'}
               </div>
             </div>
           ) : (
@@ -197,9 +200,9 @@ export const CommandCenter = () => {
                           </div>
                         </td>
                         <td>
-                          <span className={`cyber-badge ${badge}`} style={{ fontSize: '0.68rem', marginRight: '6px' }}>{st.status}</span>
+                          <span className={`cyber-badge ${badge}`} style={{ fontSize: '0.68rem', marginRight: '6px' }}>{displayCode(st.status)}</span>
                           <div style={{ fontSize: '0.68rem', color: rootCause === 'NOMINAL' ? 'var(--text-muted)' : 'var(--neon-amber)', fontFamily: 'var(--font-mono)', marginTop: '2px' }}>
-                            {rootCause}
+                            {displayCode(rootCause)}
                           </div>
                         </td>
                         <td>

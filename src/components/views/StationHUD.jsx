@@ -3,11 +3,16 @@ import { useWeather } from '../../context/WeatherContext';
 import { useAuth } from '../../context/AuthContext';
 import { Chart } from 'chart.js/auto';
 import { apiClient } from '../../utils/apiClient';
+import { displayCode } from '../../utils/display';
+
+Chart.defaults.font.family = 'Roboto';
+
+const displayReading = value => value == null || !Number.isFinite(Number(value)) ? '—' : value;
+const displayPercent = value => value == null ? '—' : `${value}%`;
 
 export const StationHUD = () => {
-  const { stations, activeStationId, history, activeStationModels, setCurrentView, setActiveStationId } = useWeather();
-  const { assignedStationId, role } = useAuth();
-  const [inspectedPeerId, setInspectedPeerId] = useState(null);
+  const { stations, activeStationId, history } = useWeather();
+  const { assignedStationId } = useAuth();
   const [stationQC, setStationQC] = useState(null);
   const [qcLoading, setQcLoading] = useState(false);
   const [showImputedStream, setShowImputedStream] = useState(false);
@@ -24,7 +29,7 @@ export const StationHUD = () => {
           setStationQC(res?.has_config ? res.config : null);
         }
       })
-      .catch(() => {})
+      .catch(() => { if (isMounted) setStationQC(null); })
       .finally(() => {
         if (isMounted) setQcLoading(false);
       });
@@ -36,32 +41,8 @@ export const StationHUD = () => {
     || stations[0]
     || {};
 
-  let station = primaryStation;
-  const isInspectingPeer = !!inspectedPeerId;
-  
-  if (isInspectingPeer && primaryStation.spatial_data?.nearby_stations) {
-      const peerData = primaryStation.spatial_data.nearby_stations.find(p => p.id === inspectedPeerId);
-      if (peerData) {
-          station = {
-              ...primaryStation,
-              ...peerData,
-              id: peerData.id,
-              name: peerData.name,
-              status: peerData.status,
-              sensors: {
-                  ...primaryStation.sensors,
-                  temperature: { value: peerData.temp, unit: "°C", wmo_flag: 0 },
-                  humidity: { value: peerData.hum, unit: "%", wmo_flag: 0 },
-                  pressure: { value: peerData.pres || 1012.0, unit: "hPa", wmo_flag: 0 }
-              },
-              spatial_data: {},
-              ml_model: null,
-              final_assessment: null
-          };
-      }
-  }
+  const station = primaryStation;
 
-  const activeModel = isInspectingPeer ? null : (activeStationModels[station.id] || activeStationModels[activeStationId]);
   const mlResult = station.ml_model;
   const spatialData = station.spatial_data;
   const finalAssessment = station.final_assessment;
@@ -76,10 +57,10 @@ export const StationHUD = () => {
   const peerChartInstanceRef = useRef(null);
 
   // Determine active displayed sensor readings (Raw vs Imputed)
-  const rawTemp = station.sensors?.temperature?.value ?? 0;
-  const rawHum = station.sensors?.humidity?.value ?? 0;
-  const rawPres = station.sensors?.pressure?.value ?? 0;
-  const rain = station.sensors?.rainfall?.value ?? 0;
+  const rawTemp = station.sensors?.temperature?.value ?? null;
+  const rawHum = station.sensors?.humidity?.value ?? null;
+  const rawPres = station.sensors?.pressure?.value ?? null;
+  const rain = station.sensors?.rainfall?.value ?? null;
 
   const imputedTemp = selfHealing?.imputed_sensors?.temperature?.value ?? rawTemp;
   const imputedHum = selfHealing?.imputed_sensors?.humidity?.value ?? rawHum;
@@ -89,9 +70,9 @@ export const StationHUD = () => {
   const hum = showImputedStream ? imputedHum : rawHum;
   const pres = showImputedStream ? imputedPres : rawPres;
 
-  const tempWmo = showImputedStream && selfHealing?.imputed_sensors?.temperature?.is_imputed ? 3 : (station.sensors?.temperature?.wmo_flag ?? 0);
-  const humWmo = showImputedStream && selfHealing?.imputed_sensors?.humidity?.is_imputed ? 3 : (station.sensors?.humidity?.wmo_flag ?? 0);
-  const presWmo = showImputedStream && selfHealing?.imputed_sensors?.pressure?.is_imputed ? 3 : (station.sensors?.pressure?.wmo_flag ?? 0);
+  const tempWmo = showImputedStream && selfHealing?.imputed_sensors?.temperature?.is_imputed ? 3 : rawTemp == null ? 9 : (station.sensors?.temperature?.wmo_flag ?? 9);
+  const humWmo = showImputedStream && selfHealing?.imputed_sensors?.humidity?.is_imputed ? 3 : rawHum == null ? 9 : (station.sensors?.humidity?.wmo_flag ?? 9);
+  const presWmo = showImputedStream && selfHealing?.imputed_sensors?.pressure?.is_imputed ? 3 : rawPres == null ? 9 : (station.sensors?.pressure?.wmo_flag ?? 9);
 
   const badgeClass = station.status === 'NORMAL' ? 'badge-normal' : 
                      (station.status === 'LOCALIZED_ANOMALY' || station.status === 'CRITICAL' || station.status === 'REJECTED') ? 'badge-critical' : 
@@ -157,7 +138,7 @@ export const StationHUD = () => {
             maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             plugins: {
-              legend: { labels: { color: '#8892b0', font: { family: 'Share Tech Mono' } } }
+              legend: { labels: { color: '#8892b0', font: { family: 'Roboto' } } }
             },
             scales: {
               x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8892b0' } },
@@ -177,7 +158,7 @@ export const StationHUD = () => {
     // Peer Comparison Radar / Bar Chart
     if (peerCanvasRef.current && spatialData?.nearby_stations) {
       const peerLabels = [station.id, ...(spatialData.nearby_stations.map(p => p.id || p.station_id))];
-      const peerTemps = [rawTemp, ...(spatialData.nearby_stations.map(p => p.temp || p.temperature))];
+      const peerTemps = [rawTemp, ...(spatialData.nearby_stations.map(p => p.temp ?? p.temperature ?? null))];
       const peerColors = [
         station.status === 'NORMAL' ? 'rgba(0, 240, 255, 0.8)' : 'rgba(255, 0, 85, 0.8)',
         ...(spatialData.nearby_stations.map(p => p.status === 'NORMAL' ? 'rgba(0, 255, 102, 0.6)' : 'rgba(255, 170, 0, 0.6)'))
@@ -255,17 +236,6 @@ export const StationHUD = () => {
 
   return (
     <>
-      {isInspectingPeer && (
-        <div style={{ background: 'rgba(168, 85, 247, 0.15)', border: '1px solid var(--neon-purple)', padding: '8px 12px', borderRadius: '6px', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ color: 'var(--neon-purple)', fontFamily: 'var(--font-tactical)', fontSize: '0.85rem' }}>
-            <i className="fa-solid fa-eye"></i> READ-ONLY PEER INSPECTION MODE ({station.id})
-          </div>
-          <button className="cyber-btn btn-sm" onClick={() => setInspectedPeerId(null)}>
-            Return to {primaryStation.id}
-          </button>
-        </div>
-      )}
-
       {/* Station Profile & Model Identity Banner */}
       <div style={{ background: 'rgba(10,15,29,0.85)', padding: '14px 18px', border: '1px solid var(--border-subtle)', borderRadius: '6px', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
@@ -273,17 +243,17 @@ export const StationHUD = () => {
             <span style={{ fontFamily: 'var(--font-tactical)', fontSize: '1.15rem', color: 'var(--neon-cyan)', fontWeight: 800 }}>
               {station.id} — {station.name}
             </span>
-            <span className={`cyber-badge ${badgeClass}`}>{station.status}</span>
+            <span className={`cyber-badge ${badgeClass}`}>{displayCode(station.status)}</span>
             {rootCauseDiag?.root_cause && rootCauseDiag.root_cause !== 'NOMINAL' && (
               <span className="cyber-badge badge-critical" style={{ fontSize: '0.72rem', letterSpacing: '0.5px' }}>
                 <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: '4px' }}></i>
-                {rootCauseDiag.root_cause}
+                {displayCode(rootCauseDiag.root_cause)}
               </span>
             )}
             <span className="cyber-badge badge-offline" style={{ fontSize: '0.68rem' }}>{station.region || "Local Microclimate"}</span>
           </div>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-            Coordinates: <strong style={{ color: 'var(--text-secondary)' }}>{station.latitude?.toFixed(4)}°N, {station.longitude?.toFixed(4)}°E</strong> | Elevation: <strong style={{ color: 'var(--text-secondary)' }}>{station.elevation || 500}m</strong>
+            Coordinates: <strong style={{ color: 'var(--text-secondary)' }}>{station.latitude == null ? '—' : `${Number(station.latitude).toFixed(4)}°N`}, {station.longitude == null ? '—' : `${Number(station.longitude).toFixed(4)}°E`}</strong> | Elevation: <strong style={{ color: 'var(--text-secondary)' }}>{station.elevation == null ? '—' : `${station.elevation}m`}</strong>
           </div>
         </div>
 
@@ -322,11 +292,11 @@ export const StationHUD = () => {
                 className={`gauge-progress-circle ${tempWmo >= 2 ? 'gauge-crimson' : (tempWmo === 3 ? 'gauge-cyan' : (temp > 40 ? 'gauge-crimson' : 'gauge-cyan'))}`}
                 cx="50" cy="50" r="42"
                 strokeDasharray="264"
-                strokeDashoffset={264 - (Math.min(50, Math.max(0, temp)) / 50) * 264}
+                strokeDashoffset={264 - (Math.min(50, Math.max(0, temp ?? 0)) / 50) * 264}
               ></circle>
             </svg>
             <div className="gauge-center-value">
-              <span className="gauge-number">{temp}</span>
+              <span className="gauge-number">{displayReading(temp)}</span>
               <span className="gauge-unit">°C</span>
             </div>
           </div>
@@ -356,11 +326,11 @@ export const StationHUD = () => {
                 className={`gauge-progress-circle ${humWmo >= 2 ? 'gauge-crimson' : 'gauge-green'}`}
                 cx="50" cy="50" r="42"
                 strokeDasharray="264"
-                strokeDashoffset={264 - (hum / 100) * 264}
+                strokeDashoffset={264 - ((hum ?? 0) / 100) * 264}
               ></circle>
             </svg>
             <div className="gauge-center-value">
-              <span className="gauge-number">{hum}</span>
+              <span className="gauge-number">{displayReading(hum)}</span>
               <span className="gauge-unit">%</span>
             </div>
           </div>
@@ -380,11 +350,11 @@ export const StationHUD = () => {
                 className="gauge-progress-circle gauge-cyan"
                 cx="50" cy="50" r="42"
                 strokeDasharray="264"
-                strokeDashoffset={264 - ((pres - 900) / 200) * 264}
+                strokeDashoffset={264 - (pres == null ? 0 : Math.min(1, Math.max(0, (pres - 900) / 200))) * 264}
               ></circle>
             </svg>
             <div className="gauge-center-value">
-              <span className="gauge-number">{pres}</span>
+              <span className="gauge-number">{displayReading(pres)}</span>
               <span className="gauge-unit">hPa</span>
             </div>
           </div>
@@ -401,11 +371,11 @@ export const StationHUD = () => {
                 className={`gauge-progress-circle ${rain > 20 ? 'gauge-crimson' : 'gauge-green'}`}
                 cx="50" cy="50" r="42"
                 strokeDasharray="264"
-                strokeDashoffset={264 - (Math.min(100, rain) / 100) * 264}
+                strokeDashoffset={264 - (Math.min(100, rain ?? 0) / 100) * 264}
               ></circle>
             </svg>
             <div className="gauge-center-value">
-              <span className="gauge-number">{rain}</span>
+              <span className="gauge-number">{displayReading(rain)}</span>
               <span className="gauge-unit">mm</span>
             </div>
           </div>
@@ -419,7 +389,7 @@ export const StationHUD = () => {
         <div className="cyber-card" style={{ padding: '16px' }}>
           <div className="sim-box-title" style={{ marginBottom: '12px' }}>
             <span><i className="fa-solid fa-atom text-cyan"></i> 3-PARAMETER THERMODYNAMIC ENGINE (PHYSICS-INFORMED)</span>
-            <span className="cyber-badge badge-normal">CLAUSIUS-CLAPEYRON CHECK: PASS</span>
+            <span className={`cyber-badge ${derivedThermo && Object.keys(derivedThermo).length ? 'badge-normal' : 'badge-offline'}`}>THERMODYNAMIC DATA: {derivedThermo && Object.keys(derivedThermo).length ? 'AVAILABLE' : 'UNAVAILABLE'}</span>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
@@ -461,30 +431,30 @@ export const StationHUD = () => {
         <div className="cyber-card" style={{ padding: '16px' }}>
           <div className="sim-box-title" style={{ marginBottom: '12px' }}>
             <span><i className="fa-solid fa-heart-pulse text-green"></i> SENSOR HEALTH INDEX & DEGRADATION ESTIMATE</span>
-            <span className={`cyber-badge ${sensorHealth?.overall_health_score >= 80 ? 'badge-normal' : (sensorHealth?.overall_health_score >= 50 ? 'badge-suspect' : 'badge-critical')}`}>
-              SHI: {sensorHealth?.overall_health_score ?? 100}%
+            <span className={`cyber-badge ${sensorHealth?.overall_health_score == null ? 'badge-offline' : sensorHealth.overall_health_score >= 80 ? 'badge-normal' : sensorHealth.overall_health_score >= 50 ? 'badge-suspect' : 'badge-critical'}`}>
+              SHI: {displayPercent(sensorHealth?.overall_health_score)}
             </span>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '10px' }}>
             <div style={{ background: 'rgba(5,8,17,0.6)', padding: '8px', borderRadius: '4px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
               <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }}>TEMP SENSOR</div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', fontWeight: 'bold', color: (sensorHealth?.sensor_scores?.temperature_sensor?.health_score || 100) > 75 ? 'var(--neon-green)' : 'var(--neon-red)' }}>
-                {sensorHealth?.sensor_scores?.temperature_sensor?.health_score ?? 100}%
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', fontWeight: 'bold', color: sensorHealth?.sensor_scores?.temperature_sensor?.health_score == null ? 'var(--text-muted)' : sensorHealth.sensor_scores.temperature_sensor.health_score > 75 ? 'var(--neon-green)' : 'var(--neon-crimson)' }}>
+                {displayPercent(sensorHealth?.sensor_scores?.temperature_sensor?.health_score)}
               </div>
             </div>
 
             <div style={{ background: 'rgba(5,8,17,0.6)', padding: '8px', borderRadius: '4px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
               <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }}>HUMIDITY SENSOR</div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', fontWeight: 'bold', color: (sensorHealth?.sensor_scores?.humidity_sensor?.health_score || 100) > 75 ? 'var(--neon-green)' : 'var(--neon-red)' }}>
-                {sensorHealth?.sensor_scores?.humidity_sensor?.health_score ?? 100}%
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', fontWeight: 'bold', color: sensorHealth?.sensor_scores?.humidity_sensor?.health_score == null ? 'var(--text-muted)' : sensorHealth.sensor_scores.humidity_sensor.health_score > 75 ? 'var(--neon-green)' : 'var(--neon-crimson)' }}>
+                {displayPercent(sensorHealth?.sensor_scores?.humidity_sensor?.health_score)}
               </div>
             </div>
 
             <div style={{ background: 'rgba(5,8,17,0.6)', padding: '8px', borderRadius: '4px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
               <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }}>PRESSURE SENSOR</div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', fontWeight: 'bold', color: (sensorHealth?.sensor_scores?.pressure_sensor?.health_score || 100) > 75 ? 'var(--neon-green)' : 'var(--neon-red)' }}>
-                {sensorHealth?.sensor_scores?.pressure_sensor?.health_score ?? 100}%
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', fontWeight: 'bold', color: sensorHealth?.sensor_scores?.pressure_sensor?.health_score == null ? 'var(--text-muted)' : sensorHealth.sensor_scores.pressure_sensor.health_score > 75 ? 'var(--neon-green)' : 'var(--neon-crimson)' }}>
+                {displayPercent(sensorHealth?.sensor_scores?.pressure_sensor?.health_score)}
               </div>
             </div>
           </div>
@@ -493,24 +463,26 @@ export const StationHUD = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
               <span style={{ color: 'var(--text-muted)' }}>DEGRADATION PROJECTION (HEURISTIC):</span>
               <strong style={{ color: 'var(--neon-cyan)', fontFamily: 'var(--font-mono)' }}>
-                {sensorHealth?.predictive_maintenance?.degradation_projection_days ?? sensorHealth?.predictive_maintenance?.remaining_useful_life_days ?? 180} DAYS
+                {sensorHealth?.predictive_maintenance?.degradation_projection_days != null || sensorHealth?.predictive_maintenance?.remaining_useful_life_days != null
+                  ? `${sensorHealth.predictive_maintenance.degradation_projection_days ?? sensorHealth.predictive_maintenance.remaining_useful_life_days} DAYS`
+                  : '—'}
               </strong>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
               <span style={{ color: 'var(--text-muted)' }}>BATTERY VOLTAGE:</span>
-              <strong style={{ color: station.battery < 3.2 ? 'var(--neon-red)' : 'var(--neon-green)', fontFamily: 'var(--font-mono)' }}>
-                {station.battery?.toFixed(2) || 'N/A'} V
+              <strong style={{ color: station.battery == null ? 'var(--text-muted)' : station.battery < 3.2 ? 'var(--neon-crimson)' : 'var(--neon-green)', fontFamily: 'var(--font-mono)' }}>
+                {station.battery == null ? '—' : `${Number(station.battery).toFixed(2)} V`}
               </strong>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
               <span style={{ color: 'var(--text-muted)' }}>MAINTENANCE RISK:</span>
-              <strong style={{ color: sensorHealth?.predictive_maintenance?.risk_level === 'HIGH' ? 'var(--neon-red)' : 'var(--neon-amber)', fontFamily: 'var(--font-mono)' }}>
-                {sensorHealth?.predictive_maintenance?.risk_level || 'LOW'}
+              <strong style={{ color: sensorHealth?.predictive_maintenance?.risk_level === 'HIGH' ? 'var(--neon-crimson)' : 'var(--neon-amber)', fontFamily: 'var(--font-mono)' }}>
+                {sensorHealth?.predictive_maintenance?.risk_level || '—'}
               </strong>
             </div>
             <div style={{ color: 'var(--text-secondary)', fontSize: '0.70rem', lineHeight: 1.3 }}>
               <i className="fa-solid fa-wrench" style={{ marginRight: '5px', color: 'var(--neon-amber)' }}></i>
-              {sensorHealth?.predictive_maintenance?.maintenance_advisory || 'All sensors calibrated within WMO Class 1 tolerance.'}
+              {sensorHealth?.predictive_maintenance?.maintenance_advisory || 'Maintenance assessment unavailable.'}
             </div>
           </div>
         </div>
@@ -582,7 +554,7 @@ export const StationHUD = () => {
       </div>
 
       {/* Nearby Station Spatial Intelligence Panel */}
-      {!isInspectingPeer && (
+      {(
         <div className="cyber-card" style={{ marginTop: '16px' }}>
           <div className="cyber-card-header" style={{ flexWrap: 'wrap', gap: '10px' }}>
             <div className="cyber-card-title">
@@ -590,7 +562,7 @@ export const StationHUD = () => {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                SEARCH RADIUS: <strong style={{ color: 'var(--neon-cyan)' }}>{spatialData?.search_radius_km ?? 800} km</strong>
+                SEARCH RADIUS: <strong style={{ color: 'var(--neon-cyan)' }}>{spatialData?.search_radius_km == null ? '—' : `${spatialData.search_radius_km} km`}</strong>
               </span>
             </div>
           </div>
@@ -602,12 +574,12 @@ export const StationHUD = () => {
                   <span style={{ fontSize: '0.72rem', fontFamily: 'var(--font-tactical)', color: 'var(--text-muted)' }}>
                     STATION + FLEET EVIDENCE FUSION:
                   </span>
-                  <span className={`cyber-badge ${finalAssessment?.badge_class || 'badge-normal'}`} style={{ fontSize: '0.82rem', padding: '4px 10px' }}>
-                    {finalAssessment?.classification || 'NORMAL'}
+                  <span className={`cyber-badge ${finalAssessment?.badge_class || 'badge-offline'}`} style={{ fontSize: '0.82rem', padding: '4px 10px' }}>
+                    {displayCode(finalAssessment?.classification)}
                   </span>
                 </div>
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                  CONFIDENCE: <strong style={{ color: 'var(--text-secondary)' }}>{finalAssessment?.confidence || 'HIGH'}</strong>
+                  CONFIDENCE: <strong style={{ color: 'var(--text-secondary)' }}>{displayCode(finalAssessment?.confidence)}</strong>
                 </div>
               </div>
 
@@ -665,12 +637,11 @@ export const StationHUD = () => {
                       <th>CURRENT TEMP</th>
                       <th>HUMIDITY</th>
                       <th>PEER STATUS</th>
-                      <th>ACTION</th>
                     </tr>
                   </thead>
                   <tbody>
                     {spatialData.nearby_stations.map(peer => {
-                      const elevDelta = (peer.elevation || 0) - (station.elevation || 0);
+                      const elevDelta = peer.elevation == null || station.elevation == null ? null : peer.elevation - station.elevation;
                       return (
                         <tr key={peer.id || peer.station_id}>
                           <td style={{ fontWeight: 'bold', color: 'var(--neon-cyan)' }}>{peer.id || peer.station_id}</td>
@@ -683,26 +654,17 @@ export const StationHUD = () => {
                             {peer.distance_km} km
                           </td>
                           <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>
-                            {elevDelta >= 0 ? `+${elevDelta}m` : `${elevDelta}m`}
+                            {elevDelta == null ? '—' : elevDelta >= 0 ? `+${elevDelta}m` : `${elevDelta}m`}
                           </td>
-                          <td style={{ fontFamily: 'var(--font-mono)' }}>{peer.temp || peer.temperature}°C</td>
-                          <td style={{ fontFamily: 'var(--font-mono)' }}>{peer.hum || peer.humidity}%</td>
+                          <td style={{ fontFamily: 'var(--font-mono)' }}>{peer.temp ?? peer.temperature ?? '—'}°C</td>
+                          <td style={{ fontFamily: 'var(--font-mono)' }}>{peer.hum ?? peer.humidity ?? '—'}%</td>
                           <td>
                             <span className={`cyber-badge ${peer.status === 'NORMAL' ? 'badge-normal' : 
                                (peer.status === 'REGIONAL_EVENT' || peer.status === 'EXTREME' ? 'badge-extreme' : 
                                (peer.status === 'LOCALIZED_ANOMALY' || peer.status === 'CRITICAL' || peer.status === 'REJECTED' ? 'badge-critical' : 'badge-suspect'))
                             }`} style={{ fontSize: '0.65rem' }}>
-                              {peer.status}
+                              {displayCode(peer.status)}
                             </span>
-                          </td>
-                          <td>
-                            <button
-                              className="cyber-btn btn-sm"
-                              style={{ fontSize: '0.65rem', padding: '2px 6px' }}
-                              onClick={() => setInspectedPeerId(peer.id || peer.station_id)}
-                            >
-                              Inspect Peer
-                            </button>
                           </td>
                         </tr>
                       );

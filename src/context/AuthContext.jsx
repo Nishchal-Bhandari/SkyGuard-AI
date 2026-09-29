@@ -114,6 +114,13 @@ export const AuthProvider = ({ children }) => {
 
       return { success: false, error: "AUTH_FAILED", message: res.message || "Authentication failed." };
     } catch (err) {
+      if (role !== 'admin' && err.status === 401) {
+        return {
+          success: false,
+          error: 'AUTH_FAILED',
+          message: 'Station login failed. Check the credentials. If station data was reset, a Central Admin must provision the station again.'
+        };
+      }
       return { success: false, error: "API_ERROR", message: err.message || "Authentication service unavailable." };
     }
   };

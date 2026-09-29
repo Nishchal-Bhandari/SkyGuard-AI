@@ -51,9 +51,9 @@
   --border-crimson: rgba(255, 0, 85, 0.5);
 
   /* Typography */
-  --font-tactical: 'Orbitron', 'Rajdhani', -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Share Tech Mono', monospace;
-  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-tactical: 'Roboto', Arial, sans-serif;
+  --font-mono: 'Roboto', Arial, sans-serif;
+  --font-ui: 'Roboto', Arial, sans-serif;
 
   /* HUD Layout & Effects */
   --corner-clip: polygon(
@@ -109,6 +109,10 @@ html, body {
   line-height: 1.5;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
+}
+
+button, input, select, textarea {
+  font-family: var(--font-ui);
 }
 
 /* Tactical Background Grid & Vignette */

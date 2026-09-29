@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useWeather } from '../../context/WeatherContext';
 import { haversineDistance } from '../../utils/spatialEngine';
 import L from 'leaflet';
+import { displayCode } from '../../utils/display';
 
 export const FleetMap = () => {
   const { role } = useAuth();
@@ -89,17 +90,17 @@ export const FleetMap = () => {
       popupDiv.style.color = '#fff';
       popupDiv.style.padding = '10px';
       popupDiv.style.border = isTarget ? '2px solid #00f0ff' : '1px solid var(--border-medium, #334155)';
-      popupDiv.style.fontFamily = "'JetBrains Mono', monospace";
+      popupDiv.style.fontFamily = "'Roboto', Arial, sans-serif";
       popupDiv.style.fontSize = '11px';
       popupDiv.style.borderRadius = '4px';
       popupDiv.style.boxShadow = '0 0 15px rgba(0,240,255,0.4)';
 
       popupDiv.innerHTML = `
-        <div style="font-weight: bold; color: #00f0ff; font-family: 'Orbitron', sans-serif; font-size: 12px; margin-bottom: 4px;">
+        <div style="font-weight: bold; color: #00f0ff; font-family: 'Roboto', Arial, sans-serif; font-size: 12px; margin-bottom: 4px;">
           ${st.id} - ${st.name} ${isTarget ? '<span style="color: #ffaa00;">[SELECTED TARGET]</span>' : ''}
         </div>
         <div>Region: <strong style="color: #94a3b8;">${st.region || 'Local'}</strong></div>
-        <div>Status: <span style="color: ${!st.source_timestamp || st.status === 'INACTIVE' ? '#94a3b8' : st.status === 'NORMAL' ? '#00ff66' : (st.status === 'SUSPECT' ? '#ffaa00' : (st.status === 'REGIONAL_EVENT' || st.status === 'EXTREME' ? '#a855f7' : '#ff0055'))}; font-weight: bold;">${st.status}</span></div>
+        <div>Status: <span style="color: ${!st.source_timestamp || st.status === 'INACTIVE' ? '#94a3b8' : st.status === 'NORMAL' ? '#00ff66' : (st.status === 'SUSPECT' ? '#ffaa00' : (st.status === 'REGIONAL_EVENT' || st.status === 'EXTREME' ? '#a855f7' : '#ff0055'))}; font-weight: bold;">${displayCode(st.status)}</span></div>
         <div>Temp: ${st.sensors?.temperature?.value == null ? '—' : st.sensors.temperature.value + '°C'} | Hum: ${st.sensors?.humidity?.value == null ? '—' : st.sensors.humidity.value + '%'}</div>
         <div>Model: <span style="color: #a855f7;">${st.ml_model?.model_id || 'Rules Only'}</span></div>
         <div>Spatial Assessment: <span style="color: #00f0ff;">${st.final_assessment?.classification || 'Awaiting observation'}</span></div>

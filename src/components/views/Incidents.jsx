@@ -4,6 +4,7 @@ import { useWeather } from '../../context/WeatherContext';
 import { IncidentModal } from '../modals/IncidentModal';
 import { tacticalAudio } from '../../utils/audio';
 import { apiClient } from '../../utils/apiClient';
+import { displayCode } from '../../utils/display';
 
 export const Incidents = () => {
   const { role, assignedStationId } = useAuth();
@@ -184,7 +185,7 @@ export const Incidents = () => {
                         <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{inc.station_name}</div>
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}><code>{inc.variable}</code></td>
-                      <td><span className={`cyber-badge ${stateBadge}`}>{inc.quality_state}</span></td>
+                      <td><span className={`cyber-badge ${stateBadge}`}>{displayCode(inc.quality_state)}</span></td>
                       <td style={{ fontWeight: 'bold', color: (inc.fault_risk || 0) >= 0.7 ? 'var(--neon-crimson)' : 'var(--neon-amber)', whiteSpace: 'nowrap' }}>
                         {inc.fault_risk}
                       </td>

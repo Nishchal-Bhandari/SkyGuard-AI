@@ -194,6 +194,7 @@ class ObservationPipeline:
                 if age > 1800 or a['quality_state'] == 'INVALID' or not peer_z:
                     continue
                 peers.append({'station_id':peer['station_id'],'id':peer['station_id'],'name':peer['station_name'],
+                    'region':peer['region'],'elevation':peer['elevation'],
                     'distance_km': max(.1,distance), 'residuals':peer_z, 'temp':state['sensors']['temperature']['value'],
                     'hum':state['sensors']['humidity']['value'],'pres':state['sensors']['pressure']['value'],
                     'status':a['classification'], 'source_timestamp':state['source_timestamp']})

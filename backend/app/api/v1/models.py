@@ -175,10 +175,22 @@ def get_station_active_model(
             "message": f"No active trained model calibrated for {clean_id} (COLD START / RULES ONLY)"
         }
 
-    # Load complete model card from artifact storage
-    artifact = model_storage_service.load_artifact(active_rec["model_location"])
+    # A registry row alone does not make a model usable for scoring.
+    try:
+        artifact = model_storage_service.load_artifact(active_rec["model_location"])
+        if not artifact:
+            artifact = model_storage_service.load_by_station_and_id(clean_id, active_rec["model_id"])
+    except (ValueError, OSError):
+        artifact = None
+
     if not artifact:
-        artifact = model_storage_service.load_by_station_and_id(clean_id, active_rec["model_id"])
+        return {
+            "success": True,
+            "station_id": clean_id,
+            "has_active_model": False,
+            "status": "ARTIFACT_UNAVAILABLE",
+            "message": "The active model artifact is unavailable; train and promote a new model.",
+        }
 
     model_card = artifact.get("model_card") if artifact else None
 

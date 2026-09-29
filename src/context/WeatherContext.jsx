@@ -105,6 +105,7 @@ export const WeatherProvider = ({ children }) => {
     error: null,
     source: "OPEN_METEO_API"
   });
+  const fleetSyncInFlight = useRef(false);
 
   const [modelDrift, setModelDrift] = useState(() => ({ ...INITIAL_MODEL_DRIFT }));
   const [externalDataLineage] = useState(() => [...EXTERNAL_DATA_LINEAGE]);
@@ -202,7 +203,9 @@ export const WeatherProvider = ({ children }) => {
   // Sync active model for activeStationId from Cloud PostgreSQL backend
   const refreshActiveStationModel = useCallback(async (stId) => {
     const targetId = stId || activeStationId;
-    if (!targetId) return null;
+    if (!session?.isAuthenticated || !targetId) return null;
+    if (isCentralAdmin(role) && (!stationCredentialsLoaded || !stationCredentials.some(station => station.stationId === targetId))) return null;
+    if (isStationOperator(role) && assignedStationId !== targetId) return null;
     try {
       const res = await apiClient.getStationActiveModel(targetId);
       if (res?.has_active_model && res?.model_card) {
@@ -220,13 +223,13 @@ export const WeatherProvider = ({ children }) => {
       console.warn("[WeatherContext] Could not fetch active model:", e.message);
     }
     return null;
-  }, [activeStationId]);
+  }, [activeStationId, session?.isAuthenticated, role, stationCredentialsLoaded, stationCredentials, assignedStationId, isCentralAdmin, isStationOperator]);
 
   useEffect(() => {
-    if (activeStationId) {
+    if (session?.isAuthenticated && activeStationId) {
       refreshActiveStationModel(activeStationId);
     }
-  }, [activeStationId, refreshActiveStationModel]);
+  }, [activeStationId, refreshActiveStationModel, session?.isAuthenticated]);
 
   // Helper function to generate realistic undulating historical telemetry
   const createStationHistory = useCallback((baseTemp = 27.5, baseHum = 70, basePres = 1012, baseWind = 8) => {
@@ -265,15 +268,21 @@ export const WeatherProvider = ({ children }) => {
    * Sync all stations with real-world live weather data from Open-Meteo API
    */
   const syncLiveOpenMeteoData = useCallback(async (customStations = null) => {
+    if (fleetSyncInFlight.current) return false;
+    fleetSyncInFlight.current = true;
     setLiveApiStatus(prev => ({ ...prev, isSyncing: true, error: null }));
     const started = performance.now();
 
     try {
       const res = await apiClient.getFleetLiveState();
       
-      if (res && res.success && res.stations) {
+      if (res?.success !== true || !Array.isArray(res.stations)) {
+        throw new Error('Backend returned an invalid fleet response.');
+      }
         // Map backend station schema to frontend UI schema where necessary
-        const updatedStations = res.stations.map(st => ({
+        const authoritativeRoster = isCentralAdmin(role) && stationCredentialsLoaded ? stationCredentials : null;
+        const allowedStationIds = authoritativeRoster && new Set(authoritativeRoster.map(station => station.stationId));
+        const updatedStations = res.stations.filter(st => !allowedStationIds || allowedStationIds.has(st.station_id)).map(st => ({
           ...st,
           id: st.station_id,
           name: st.station_name,
@@ -283,22 +292,24 @@ export const WeatherProvider = ({ children }) => {
           model_status: st.ml_model ? "ACTIVE_PRODUCTION" : "PENDING_CALIBRATION"
         }));
         
-        setStations(prev => mergeLiveAssessments(prev, updatedStations));
+        setStations(prev => mergeLiveAssessments(prev, updatedStations, authoritativeRoster));
         
         // Append to history
         setHistory(prevHist => {
-          const nextHist = { ...prevHist };
+          const nextHist = allowedStationIds
+            ? Object.fromEntries(Object.entries(prevHist).filter(([id]) => allowedStationIds.has(id)))
+            : { ...prevHist };
           updatedStations.forEach(st => {
             if (!nextHist[st.id]) nextHist[st.id] = [];
             if (!st.source_timestamp || nextHist[st.id].some(point => point.source_timestamp === st.source_timestamp)) return;
             nextHist[st.id] = [...nextHist[st.id], {
               time: new Date(st.source_timestamp).toLocaleTimeString(),
               source_timestamp: st.source_timestamp,
-              temperature: st.sensors.temperature.value,
-              humidity: st.sensors.humidity.value,
-              pressure: st.sensors.pressure.value,
-              wind_speed: st.sensors.wind_speed.value,
-              rainfall: st.sensors.rainfall.value
+              temperature: st.sensors?.temperature?.value ?? null,
+              humidity: st.sensors?.humidity?.value ?? null,
+              pressure: st.sensors?.pressure?.value ?? null,
+              wind_speed: st.sensors?.wind_speed?.value ?? null,
+              rainfall: st.sensors?.rainfall?.value ?? null
             }].slice(-30);
           });
           return nextHist;
@@ -317,24 +328,27 @@ export const WeatherProvider = ({ children }) => {
         
         setLiveApiStatus({
           isOnline: true,
-          hasObservations: updatedStations.length > 0,
+          hasObservations: updatedStations.some(st => Boolean(st.source_timestamp)),
           latencyMs: Math.round(performance.now() - started),
           lastSync: new Date().toLocaleTimeString(),
           isSyncing: false,
           error: null,
           source: "BACKEND_FLEET_EVAL"
         });
-      }
+        return true;
     } catch (err) {
       console.error("[WeatherContext] Error fetching fleet state:", err);
       setLiveApiStatus(prev => ({
         ...prev,
         isOnline: false,
         isSyncing: false,
-        error: "Failed to connect to backend telemetry service."
+        error: err.message || "Failed to connect to backend telemetry service."
       }));
+      return false;
+    } finally {
+      fleetSyncInFlight.current = false;
     }
-  }, []);
+  }, [role, stationCredentialsLoaded, stationCredentials, isCentralAdmin, saveIncidents]);
 
   /**
    * Hydrate Stations from SQLite Backend on Authentication / Mount
@@ -350,20 +364,7 @@ export const WeatherProvider = ({ children }) => {
           try {
             stationData = await apiClient.getStationProfile(assignedStationId);
           } catch (err) {
-            // If backend error or network fallback, find matching preset
-            const preset = OPEN_METEO_PRESET_STATIONS.find(
-              p => p.id.toUpperCase() === assignedStationId.toUpperCase()
-            );
-            if (preset) {
-              stationData = {
-                station_id: preset.id,
-                station_name: preset.name,
-                region: preset.region,
-                latitude: preset.lat,
-                longitude: preset.lon,
-                elevation: preset.elevation
-              };
-            }
+            console.warn('[WeatherContext] Station profile unavailable:', err.message);
           }
 
           if (stationData) {
@@ -564,7 +565,9 @@ export const WeatherProvider = ({ children }) => {
 
   const refreshStationChecklist = useCallback(async (stId) => {
     const targetId = stId || activeStationId;
-    if (!targetId) return;
+    if (!session?.isAuthenticated || !targetId) return;
+    if (isCentralAdmin(role) && (!stationCredentialsLoaded || !stationCredentials.some(station => station.stationId === targetId))) return;
+    if (isStationOperator(role) && assignedStationId !== targetId) return;
     try {
       const res = await apiClient.getMaintenanceTasks(targetId);
       if (res?.success && Array.isArray(res.tasks)) {
@@ -573,13 +576,13 @@ export const WeatherProvider = ({ children }) => {
     } catch (e) {
       console.warn("[WeatherContext] Could not fetch maintenance tasks:", e.message);
     }
-  }, [activeStationId, mapMaintenanceTaskFromBackend]);
+  }, [activeStationId, mapMaintenanceTaskFromBackend, session?.isAuthenticated, role, stationCredentialsLoaded, stationCredentials, assignedStationId, isCentralAdmin, isStationOperator]);
 
   useEffect(() => {
-    if (activeStationId) {
+    if (session?.isAuthenticated && activeStationId) {
       refreshStationChecklist(activeStationId);
     }
-  }, [activeStationId, refreshStationChecklist]);
+  }, [activeStationId, refreshStationChecklist, session?.isAuthenticated]);
 
   // Persists checklist completion to the backend (survives reload / other operators).
   const updateChecklist = useCallback(async (stationId, itemId, completed) => {

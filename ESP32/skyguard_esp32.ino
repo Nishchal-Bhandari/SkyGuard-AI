@@ -30,15 +30,21 @@
 #if __has_include("secrets.h")
 #include "secrets.h"
 #endif
+#ifndef SKYGUARD_WIFI_SSID
+#define SKYGUARD_WIFI_SSID "YOUR_WIFI_NAME"
+#endif
+#ifndef SKYGUARD_WIFI_PASSWORD
+#define SKYGUARD_WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+#endif
 #ifndef SKYGUARD_STATION_DEVICE_KEY
 #define SKYGUARD_STATION_DEVICE_KEY ""
 #endif
 
 // ============================================================================
-// 1. CONFIGURATION (Update Wi-Fi credentials & your PC's IP address)
+// 1. CONFIGURATION (Set Wi-Fi credentials in ignored ESP32/secrets.h)
 // ============================================================================
-const char* WIFI_SSID     = "YOUR_WIFI_NAME";     // <-- Enter your Wi-Fi SSID
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"; // <-- Enter your Wi-Fi Password
+const char* WIFI_SSID = SKYGUARD_WIFI_SSID;
+const char* WIFI_PASSWORD = SKYGUARD_WIFI_PASSWORD;
 
 // Target: SkyGuard-AI FastAPI Backend (ESP32 Telemetry Ingest)
 // ► UPDATE <PC_IP> to your computer's local Wi-Fi IP address (e.g. 192.168.1.5)

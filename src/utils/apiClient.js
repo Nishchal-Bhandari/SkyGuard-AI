@@ -63,6 +63,15 @@ class ApiClient {
     const url = `${API_BASE}${cleanEndpoint.startsWith('/') ? '' : '/'}${cleanEndpoint}`;
     const isFormData = options.body instanceof FormData;
     const token = this.getToken();
+    const isPublicEndpoint = ['/health', '/auth/admin/login', '/auth/station/login'].includes(cleanEndpoint);
+
+    if (!token && !isPublicEndpoint) {
+      const error = new Error('Please sign in to continue.');
+      error.status = 401;
+      error.isAuthenticationError = true;
+      window.dispatchEvent(new CustomEvent('skyguard:session-expired', { detail: { endpoint } }));
+      throw error;
+    }
 
     const headers = {
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
