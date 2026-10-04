@@ -58,3 +58,11 @@ def test_hard_failure_is_urgent_and_skips_peers():
 def test_legacy_incident_without_evidence_does_not_fail():
     r = build_reasoning({'variable': 'core:UNKNOWN', 'quality_state': 'NORMAL', 'status': 'open', 'evidence_data': {}})
     assert r['priority'] in {'P1', 'P2', 'P3'} and r['handling_steps']
+
+
+def test_partial_peer_agreement_holds_the_incident():
+    r = build_reasoning(incident('LOCALIZED_ANOMALY_UNCONFIRMED', root='REGIONAL_WEATHER_FRONT', peers=4,
+                                 fleet_evidence={'eligible_peer_count': 4, 'agreement_index': .2, 'search_radius_km': 60, 'corroborating_peers': 2}))
+    assert r['suggested_action'] == 'ACKNOWLEDGE'
+    assert 'PEER_PARTIAL_AGREEMENT' in codes(r)
+    assert 'sensor fault' in r['headline']

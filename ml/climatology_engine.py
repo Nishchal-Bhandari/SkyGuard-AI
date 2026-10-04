@@ -10,6 +10,9 @@ import math
 import datetime
 from typing import Dict, Any, List, Tuple
 
+SEASONAL_MIN_SPAN_DAYS = 330
+
+
 class ClimatologyEngine:
     def __init__(self):
         # Huber loss tuning constant (1.345 is standard for 95% efficiency on normal data)
@@ -102,10 +105,12 @@ class ClimatologyEngine:
         # 1.4826 converts MAD to standard deviation for normal distribution
         return max(1.4826 * mad, 1e-6)
 
-    def fit_irls(self, hours: List[float], days: List[float], y: List[float], max_iter=10) -> Tuple[List[float], float]:
+    def fit_irls(self, hours: List[float], days: List[float], y: List[float], max_iter=10, seasonal: bool = True) -> Tuple[List[float], float]:
         """
         Fits a harmonic regression model using Iteratively Reweighted Least Squares (IRLS).
         Returns the fitted coefficients and the robust scale (sigma).
+        With seasonal=False the annual terms are removed (coefficients stay zero), because a window shorter
+        than a year cannot identify a seasonal cycle and the fit would extrapolate wildly outside it.
         """
         if not y:
             return [0.0]*9, 1.0
@@ -116,12 +121,17 @@ class ClimatologyEngine:
             return [mean_y] + [0.0]*8, 1.0
             
         X = self._build_design_matrix(hours, days)
+        if not seasonal:
+            X = [row[:5] + [0.0] * 4 for row in X]
         X_T = self._matrix_transpose(X)
+        # Unit ridge on the disabled columns keeps the normal equations invertible and their coefficients at zero.
+        ridge = [0.0] * 5 + [0.0 if seasonal else 1.0] * 4
         
         # Initial OLS fit
         try:
             # (X^T * X)^-1 * X^T * Y
             XT_X = self._matrix_multiply(X_T, X)
+            XT_X = [[v + (ridge[i] if i == j else 0.0) for j, v in enumerate(row)] for i, row in enumerate(XT_X)]
             XT_X_inv = self._matrix_inverse_9x9(XT_X)
             XT_Y = self._matrix_multiply(X_T, [[v] for v in y])
             beta = [v[0] for v in self._matrix_multiply(XT_X_inv, XT_Y)]
@@ -150,6 +160,7 @@ class ClimatologyEngine:
             
             try:
                 XWT_XW = self._matrix_multiply(XW_T, XW)
+                XWT_XW = [[v + (ridge[i] if i == j else 0.0) for j, v in enumerate(row)] for i, row in enumerate(XWT_XW)]
                 XWT_XW_inv = self._matrix_inverse_9x9(XWT_XW)
                 XWT_YW = self._matrix_multiply(XW_T, yw)
                 beta = [v[0] for v in self._matrix_multiply(XWT_XW_inv, XWT_YW)]
@@ -165,6 +176,8 @@ class ClimatologyEngine:
         if not observations:
              return {}
              
+        # Seasonal terms need close to a full annual cycle; shorter windows get a diurnal-only baseline.
+        stamps = []
         hours: List[float] = []
         days: List[float] = []
         temps: List[float] = []
@@ -177,6 +190,7 @@ class ClimatologyEngine:
              try:
                  dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
                  day_of_year = float(dt.timetuple().tm_yday)
+                 stamps.append(dt.toordinal())
              except Exception:
                  day_of_year = 1.0
              
@@ -188,15 +202,17 @@ class ClimatologyEngine:
              hums.append(float(obs.get("hum", obs.get("humidity", 60.0))))
              press.append(float(obs.get("pres", obs.get("pressure", 1010.0))))
              
-        t_beta, t_sigma = self.fit_irls(hours, days, temps)
-        h_beta, h_sigma = self.fit_irls(hours, days, hums)
-        p_beta, p_sigma = self.fit_irls(hours, days, press)
+        seasonal = bool(stamps) and max(stamps) - min(stamps) >= SEASONAL_MIN_SPAN_DAYS
+        t_beta, t_sigma = self.fit_irls(hours, days, temps, seasonal=seasonal)
+        h_beta, h_sigma = self.fit_irls(hours, days, hums, seasonal=seasonal)
+        p_beta, p_sigma = self.fit_irls(hours, days, press, seasonal=seasonal)
         
         return {
              "temperature": {"coefficients": t_beta, "robust_sigma": t_sigma},
              "humidity": {"coefficients": h_beta, "robust_sigma": h_sigma},
              "pressure": {"coefficients": p_beta, "robust_sigma": p_sigma},
-             "observation_count": len(observations)
+             "observation_count": len(observations),
+             "seasonal_terms": seasonal,
         }
 
     def compute_expected(self, coeffs: List[float], hour: float, day_of_year: float) -> float:

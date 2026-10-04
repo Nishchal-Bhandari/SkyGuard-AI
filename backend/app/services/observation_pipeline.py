@@ -15,6 +15,7 @@ from ml.sensor_health import sensor_health_engine
 from ml.spatial_engine import haversine_distance
 
 QC_RESIDUAL = 3.
+NOISE_INDEX = 3.
 SEVERE_RESIDUAL = 6.
 RESIDUAL_SATURATION = SEVERE_RESIDUAL
 
@@ -162,6 +163,7 @@ class ObservationPipeline:
         # Robust residual trend detects gradual bias, not the diurnal cycle.
         drift = 0.
         drifting = False
+        noisy = False
         if z and len(history) >= 12:
             recent = history[-12:]
             residual_history = [self._baseline(r, history[:i], artifact)[2] for i,r in enumerate(recent, start=max(0,len(history)-12))]
@@ -171,9 +173,15 @@ class ObservationPipeline:
                 slopes = [(b[1]-a[1])/max((b[0]-a[0]).total_seconds()/86400, 1/1440) for i,a in enumerate(series) for b in series[i+1:] if b[0] > a[0]]
                 slope_z = statistics.median(slopes) if slopes else 0.
                 span_days = (series[-1][0]-series[0][0]).total_seconds()/86400
-                # A drift must have moved the current reading away from baseline, in the direction of the trend.
-                drifting = abs(slope_z*span_days) >= 3 and abs(z[0]) >= 2 and z[0]*slope_z > 0
+                # A drift must have moved the current reading past the QC limit, in the direction of the trend.
+                drifting = abs(slope_z*span_days) >= 3 and abs(z[0]) >= QC_RESIDUAL and z[0]*slope_z > 0
                 drift = slope_z*sigma['temp']
+            # Noise degradation: the typical step between consecutive residuals, robust to isolated events (about 1 for healthy data).
+            stream = [v for v in residual_history if v] + [z]
+            if len(stream) >= 7:
+                # The current and previous readings must both depart too, so a burst that has ended is not still reported.
+                noisy = bool(prior_z) and any(abs(z[i]) >= QC_RESIDUAL and abs(prior_z[i]) >= QC_RESIDUAL
+                    and 1.4826*statistics.median(abs(b[i]-a[i]) for a,b in zip(stream, stream[1:]))/math.sqrt(2) >= NOISE_INDEX for i in range(3))
         qc = max(abs(v) for v in z) >= QC_RESIDUAL if z else False
         severe = max(abs(v) for v in z) >= SEVERE_RESIDUAL if z else False
         cur.execute('SELECT * FROM station_qc_config WHERE station_id = ?', (sid,))
@@ -185,7 +193,7 @@ class ObservationPipeline:
             if value is not None and ((lo is not None and value < lo) or (hi is not None and value > hi)):
                 breached.append(long)
         evidence = {'z_qc': float(qc or bool(breached)), 'z_phys': float(hard),
-            'z_temp': float(spike or flatline or persistent_departure or drifting) if previous else None,
+            'z_temp': float(spike or flatline or noisy or persistent_departure or drifting) if previous else None,
             'z_ml': float(ml['is_anomaly']) if ml.get('has_model') else None,
             'z_multi': float(bool(physical)), 'z_health': None}
         cur.execute('SELECT coefficients FROM fusion_coefficients WHERE status = ? ORDER BY id DESC LIMIT 1', ('FITTED_SYNTHETIC',))
@@ -194,7 +202,7 @@ class ObservationPipeline:
         # A model flag alone is not enough: lag features make the first normal reading after an event look anomalous.
         corroborated = any(evidence[key] for key in ('z_qc','z_temp','z_multi'))
         # A residual this large stands on its own even if the model and temporal channels stay quiet.
-        local = hard or flatline or severe or (fusion['score'] >= .5 and corroborated)
+        local = hard or flatline or noisy or severe or (fusion['score'] >= .5 and corroborated)
         peers = []
         if z:
             cur.execute("SELECT * FROM stations WHERE status = 'ACTIVE' AND station_id != ?", (sid,))
@@ -224,18 +232,22 @@ class ObservationPipeline:
         departures = [saturate(p['residuals'][axis]) for p in peers]
         agreement = None
         candidate = False
+        corroborating = 0
         if z and len(peers) >= 2:
             med = statistics.median(departures)
             spread = max(1.,1.4826*statistics.median(abs(v-med) for v in departures))
             agreement = math.exp(-.5*((saturate(z[axis])-med)/spread)**2)
             candidate = not hard and local and abs(z[axis])>=2 and agreement>=.6 and sum(abs(v)>=2 and v*z[axis]>0 for v in departures)>len(peers)/2
+            corroborating = sum(abs(v)>=QC_RESIDUAL and v*z[axis]>0 for v in departures)
         cur.execute('SELECT assessment_data FROM observations WHERE station_id = ? AND source_timestamp < ? ORDER BY source_timestamp DESC LIMIT 1', (sid,ts))
         last = cur.fetchone()
         last_state = json.loads(last['assessment_data']) if last else None
         prior_candidate = bool(last_state and last_state['final_assessment'].get('regional_candidate') and (instant(ts)-instant(last_state['source_timestamp'])).total_seconds()<=1800)
         regional = candidate and prior_candidate
         # Peers agree but persistence is not yet proven: hold for confirmation without attributing a sensor fault.
-        pending = candidate and not regional
+        # Several (but not most) peers show the same departure, e.g. a sea-breeze front: a sensor fault cannot be asserted. One chance 3-sigma peer is not corroboration.
+        partial = not candidate and not hard and local and len(peers) >= 2 and abs(z[axis]) >= QC_RESIDUAL and (corroborating >= 2 or corroborating*2 >= len(peers) > 0)
+        pending = (candidate and not regional) or partial
         weather = regional or pending
         classification = 'REGIONAL_EVENT' if regional else 'LOCALIZED_ANOMALY_UNCONFIRMED' if pending else ('LOCALIZED_ANOMALY' if len(peers)>=2 else 'LOCALIZED_ANOMALY_UNCONFIRMED') if local else 'NORMAL'
         completeness = sum(v is not None for v in evidence.values())/6
@@ -246,11 +258,13 @@ class ObservationPipeline:
         elif hard:
             root = 'MISSING_DATA' if any('MISSING' in v or 'NON_FINITE' in v for v in issues) else 'COMMUNICATION_CORRUPTION' if any('SENTINEL' in v for v in issues) else 'SUPER_SATURATION_VIOLATION'
         elif local:
-            root = 'SENSOR_FLATLINE' if flatline else 'THERMAL_SPIKE' if spike else 'CALIBRATION_DRIFT'
+            sudden = bool(z and prior_z and abs(prior_z[axis]) < QC_RESIDUAL)
+            thermal_spike = axis == 0 and (spike or (sudden and abs(z[0]) >= SEVERE_RESIDUAL))
+            root = 'SENSOR_FLATLINE' if flatline else 'SENSOR_NOISE_DEGRADATION' if noisy else 'THERMAL_SPIKE' if thermal_spike else 'CALIBRATION_DRIFT'
         if local and not weather and row['battery'] is not None and row['battery'] < 11.2:
             root = 'POWER_SAG_BROWNOUT'
-        action = 'Monitor atmospheric event; preserve observations.' if regional else 'Hold: peers show the same departure; confirm on the next reading before any sensor action.' if pending else 'Inspect implicated sensors and review evidence.' if local else 'Continue monitoring.'
-        diagnosis = {'root_cause':root,'confidence':confidence,'specific_reason':f'{classification}: ' + ('peers show the same departure; awaiting a confirming reading.' if pending else 'source-time physics, temporal and station evidence.'),
+        action = 'Monitor atmospheric event; preserve observations.' if regional else 'Hold: peers show the same departure; confirm on the next reading before any sensor action.' if candidate and pending else 'Hold: some peers show the same departure; check shared exposure before any sensor action.' if pending else 'Inspect implicated sensors and review evidence.' if local else 'Continue monitoring.'
+        diagnosis = {'root_cause':root,'confidence':confidence,'specific_reason':f'{classification}: ' + ('peers show the same departure; awaiting a confirming reading.' if candidate and pending else 'some peers show the same departure; a sensor fault is not confirmed.' if pending else 'source-time physics, temporal and station evidence.'),
             'recommended_action':action,'ranked_alternatives':[{'root_cause':'INSUFFICIENT_EVIDENCE' if not peers else 'REGIONAL_WEATHER_FRONT' if local and not weather else 'NOMINAL','confidence':min(.2,confidence)}]}
         health = sensor_health_engine.evaluate_station_health(sid,'REGIONAL_EVENT' if weather else 'CRITICAL' if hard else classification,
             drift_rate_c_per_day=0 if weather else drift, battery_v=row['battery'] if row['battery'] is not None else 12.6,
@@ -278,11 +292,11 @@ class ObservationPipeline:
                     'source_peers':[p['station_id'] for p in healthy], 'wmo_flag':3,'is_imputed':True,'unit':sensors[long]['unit']}
         assessment = {'station_id':sid,'source_timestamp':ts,'quality_state':'INVALID' if hard else 'SUSPECT' if local and not regional else 'VALID',
             'severity':'CRITICAL' if hard else 'LOW' if regional else 'MEDIUM' if pending else 'HIGH' if local else 'NONE','classification':classification,'legacy_state':classification,
-            'anomaly_probability':0. if regional else 1. if hard else fusion['score']*(1-agreement) if pending else fusion['score'],'local_probability':1. if hard else fusion['score'],
+            'anomaly_probability':0. if regional else 1. if hard else fusion['score']*(1-(agreement if candidate else corroborating/len(peers))) if pending else fusion['score'],'local_probability':1. if hard else fusion['score'],
             'confidence':confidence,'evidence_completeness':completeness,'readiness':ready,'evidence_vector':evidence,'fusion':fusion,
             'root_cause':root,'root_cause_diagnosis':diagnosis,'interpretation':diagnosis['specific_reason'],'observed':{p:row[p] for p in ('temp','hum','pres')},
             'expected':expected,'residuals':z,'integrity_issues':issues,'physics_violations':physical,'regional_candidate':candidate,
-            'fleet_evidence':{'eligible_peer_count':len(peers),'agreement_index':agreement,'peers':peers,'fleet_evidence_state':'AVAILABLE' if len(peers)>=2 else 'INCOMPLETE'},
+            'fleet_evidence':{'eligible_peer_count':len(peers),'agreement_index':agreement,'corroborating_peers':corroborating,'peers':peers,'fleet_evidence_state':'AVAILABLE' if len(peers)>=2 else 'INCOMPLETE'},
             'imputation':imputed,'anomaly_score':ml.get('anomaly_score'), 'badge_class':'badge-normal' if not local else 'badge-extreme' if weather else 'badge-critical'}
         return {'station_id':sid,'station_name':station['station_name'],'latitude':station['latitude'],'longitude':station['longitude'],'elevation':station['elevation'],
             'region':station['region'],'source_timestamp':ts,'last_seen':ts,'status':classification,'sensors':sensors,'battery':row['battery'],'signal':row['signal'],

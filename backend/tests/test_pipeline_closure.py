@@ -284,3 +284,36 @@ def test_extreme_single_channel_departure_is_not_vetoed(station):
     assert assessment['evidence_vector']['z_qc'] == 1.0 and not assessment['evidence_vector']['z_temp']
     assert assessment['classification'] in ('LOCALIZED_ANOMALY', 'LOCALIZED_ANOMALY_UNCONFIRMED')
     assert assessment['root_cause'] not in ('NOMINAL', 'REGIONAL_WEATHER_FRONT')
+
+
+def test_partial_peer_agreement_does_not_blame_the_sensor(station):
+    _, client, headers = station
+    prefix = 'SEA-' + uuid.uuid4().hex[:5].upper()
+    ids = [f'{prefix}-{i}' for i in range(5)]
+    start = dt.datetime(2026, 8, 1, tzinfo=dt.timezone.utc)
+    for i, sid in enumerate(ids):
+        created = client.post('/api/v1/admin/stations', headers=headers, json={
+            'station_id': sid, 'station_name': sid, 'username': sid.lower(),
+            'password': 'test-password', 'latitude': 12., 'longitude': 77. + i * .03, 'elevation': 0.})
+        assert created.status_code == 201
+        rows = []
+        for hour in range(72):
+            phase = 2 * math.pi * (hour % 24) / 24
+            rows.append({'timestamp': (start + dt.timedelta(hours=hour)).isoformat(),
+                'temp': 25 + 2 * math.sin(phase) + i * .05 + .1 * math.sin(hour * 1.7 + i),
+                'hum': 60 + 3 * math.cos(phase), 'pres': 1013 + .5 * math.sin(phase), 'wind': 4., 'rain': 0.})
+        assert insert_telemetry_batch(sid, rows)[0] == 72
+    timestamp = (start + dt.timedelta(hours=72)).isoformat()
+    phase = 2 * math.pi * (72 % 24) / 24
+    base_temp = 25 + 2 * math.sin(phase)
+    # The target and half of its four peers see a front; the others do not.
+    affected = {ids[0], ids[1], ids[2]}
+    target = None
+    for i, sid in list(enumerate(ids))[::-1]:
+        temp = base_temp + i * .05 + (-14 if sid in affected else 0)
+        state = observation_pipeline.process(sid, frame(timestamp, temp=temp, hum=60 + 3 * math.cos(phase), pres=1013 + .5 * math.sin(phase)))['state']
+    target = state['final_assessment']
+    assert target['classification'] == 'LOCALIZED_ANOMALY_UNCONFIRMED'
+    assert target['root_cause'] == 'REGIONAL_WEATHER_FRONT'
+    assert target['fleet_evidence']['corroborating_peers'] >= 2
+    assert target['imputation'] == {}

@@ -23,6 +23,10 @@ ROOT_CAUSE_STEPS = {
         'Compare the sensor with a calibrated reference instrument at the station.',
         'Schedule recalibration only if the bias persists over several readings and peers do not share it.',
     ],
+    'SENSOR_NOISE_DEGRADATION': [
+        'Inspect the sensor element, shielding and wiring for loose contacts or electrical interference.',
+        'Compare with a reference instrument; erratic readings that average out can hide a failing sensor.',
+    ],
     'POWER_SAG_BROWNOUT': [
         'Check battery voltage and solar charging first; brownouts corrupt readings and can mimic a sensor fault.',
         'Judge the sensors only after power is restored.',
@@ -70,6 +74,8 @@ def build_reasoning(incident: Dict[str, Any]) -> Dict[str, Any]:
     peers = int(peers) if peers is not None else 0
     agreement = _number(fleet.get('agreement_index'))
     candidate = bool(a.get('regional_candidate'))
+    corroborating = int(_number(fleet.get('corroborating_peers')) or 0)
+    partial = not candidate and not hard and classification == 'LOCALIZED_ANOMALY_UNCONFIRMED' and peers >= 2 and (corroborating >= 2 or corroborating * 2 >= peers)
     radius = fleet.get('search_radius_km')
 
     factors: List[Dict[str, str]] = []
@@ -119,6 +125,9 @@ def build_reasoning(incident: Dict[str, Any]) -> Dict[str, Any]:
     elif candidate:
         add('REGIONAL_CANDIDATE_PENDING', 'Neighbours may share this change',
             f'{peers} peers move the same way (agreement {agreement:.2f}). One more confirming reading within 30 minutes reclassifies it as a regional event.', 'against')
+    elif partial:
+        add('PEER_PARTIAL_AGREEMENT', 'Some neighbours show the same change',
+            f'{corroborating} of {peers} nearby stations depart in the same direction, but not most of them. A localized weather front such as a sea breeze is possible, so a sensor fault is not confirmed.', 'against')
     elif peers >= 2 and not hard:
         spread = f' (agreement {agreement:.2f})' if agreement is not None else ''
         add('PEER_DISAGREEMENT', 'Neighbours do not share it',
@@ -150,6 +159,12 @@ def build_reasoning(incident: Dict[str, Any]) -> Dict[str, Any]:
         headline = f'{label} failed a hard data or physics check; this reading cannot be trusted regardless of weather.'
         steps = ROOT_CAUSE_STEPS.get(root_cause, ['Inspect the implicated sensor and its data path.']) + ['Invalidate the reading once the fault is confirmed; machine learning and peer comparison were skipped for it.']
         why = 'Hard-gate failures are invalid by definition.'
+    elif partial:
+        priority, suggested = 'P2', 'ACKNOWLEDGE'
+        headline = f'{label} is unusual and {corroborating} of {peers} neighbours show the same change, so this may be a localized weather front rather than a sensor fault.'
+        steps = ['Check whether the stations that agree share exposure with this one (coast, elevation, terrain) and whether the others are simply outside the front.',
+                 'Acknowledge and watch the next readings; a sensor fault should not be asserted while neighbours corroborate the change.']
+        why = 'Partial peer agreement means a sensor fault is unproven.'
     elif candidate:
         priority, suggested = 'P2', 'ACKNOWLEDGE'
         headline = f'{label} is unusual, but neighbouring stations are moving the same way; this may be an emerging weather event.'
