@@ -10,8 +10,13 @@ from backend.app.storage.database import (
     clear_all_incidents
 )
 from backend.app.api.v1.auth import get_current_user, require_admin
+from backend.app.services.incident_reasoning import build_reasoning
 
 router = APIRouter(tags=["Incident Triage & Adjudication"])
+
+
+def _with_reasoning(incident: Dict[str, Any]) -> Dict[str, Any]:
+    return {**incident, "reasoning": build_reasoning(incident)}
 
 
 class AdjudicatePayload(BaseModel):
@@ -33,7 +38,7 @@ def get_incidents(
     if current_user.get("role") == "station_operator":
         filter_station = str(current_user.get("station_id", "")).strip().upper()
 
-    incidents = list_incidents(station_id=filter_station, status=status)
+    incidents = [_with_reasoning(i) for i in list_incidents(station_id=filter_station, status=status)]
     return {
         "success": True,
         "count": len(incidents),
@@ -63,7 +68,7 @@ def get_incident_by_id(
                 detail=f"Station identity violation: cannot view incident for '{incident['station_id']}'"
             )
 
-    return {"success": True, "incident": incident}
+    return {"success": True, "incident": _with_reasoning(incident)}
 
 
 @router.post("/incidents/{incident_id}/adjudicate")
@@ -98,7 +103,7 @@ def adjudicate(
     return {
         "success": True,
         "message": f"Incident {clean_id} adjudicated as {payload.action}",
-        "incident": updated
+        "incident": _with_reasoning(updated)
     }
 
 

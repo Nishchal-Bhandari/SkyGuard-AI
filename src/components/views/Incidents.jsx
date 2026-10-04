@@ -5,6 +5,7 @@ import { IncidentModal } from '../modals/IncidentModal';
 import { tacticalAudio } from '../../utils/audio';
 import { apiClient } from '../../utils/apiClient';
 import { displayCode } from '../../utils/display';
+import { PRIORITY_BADGE, ACTION_LABELS, compareIncidents, formatRisk, isClosedIncident } from '../../utils/incidentTriage';
 
 export const Incidents = () => {
   const { role, assignedStationId } = useAuth();
@@ -19,13 +20,18 @@ export const Incidents = () => {
     ? (incidents || []).filter(i => String(i.station_id || '').toUpperCase() === String(assignedStationId).toUpperCase())
     : (incidents || []);
 
-  const visibleIncidents = statusFilter === 'all'
+  const visibleIncidents = (statusFilter === 'all'
     ? baseIncidents
-    : baseIncidents.filter(i => String(i.status || '').toLowerCase() === statusFilter.toLowerCase());
+    : baseIncidents.filter(i => String(i.status || '').toLowerCase() === statusFilter.toLowerCase())
+  ).slice().sort(compareIncidents);
 
   const openCount = baseIncidents.filter(i => i.status === 'open').length;
   const ackCount = baseIncidents.filter(i => i.status === 'acknowledged').length;
   const resCount = baseIncidents.filter(i => i.status === 'resolved' || i.status === 'closed').length;
+  const activeByPriority = ['P1', 'P2', 'P3'].map(p => ({
+    priority: p,
+    count: baseIncidents.filter(i => !isClosedIncident(i) && i.reasoning?.priority === p).length,
+  }));
 
   const handleOpenIncident = (inc) => {
     setSelectedIncident(inc);
@@ -138,6 +144,15 @@ export const Incidents = () => {
             )}
           </div>
         </div>
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap', padding: '8px 16px', borderBottom: '1px solid var(--border-subtle)', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+          <span style={{ fontFamily: 'var(--font-tactical)' }}>ACTIVE BY PRIORITY:</span>
+          {activeByPriority.map(({ priority, count }) => (
+            <span key={priority} className={`cyber-badge ${PRIORITY_BADGE[priority]}`} style={{ fontSize: '0.68rem' }}>
+              {priority} {{ P1: 'ACT NOW', P2: 'REVIEW SOON', P3: 'MONITOR' }[priority]}: {count}
+            </span>
+          ))}
+          <span>Sorted by urgency. Review an incident to see why it was raised and the suggested handling.</span>
+        </div>
         <div className="cyber-card-body" style={{ padding: 0 }}>
           <div className="tactical-table-wrapper">
             <table className="tactical-table incident-triage-table">
@@ -149,7 +164,8 @@ export const Incidents = () => {
                   <th>VARIABLE</th>
                   <th>QUALITY FLAG</th>
                   <th>RISK</th>
-                  <th>REASON CODES</th>
+                  <th>PRIORITY</th>
+                  <th>WHY FLAGGED &amp; NEXT STEP</th>
                   <th>STATUS</th>
                   <th>ACTION</th>
                 </tr>
@@ -157,7 +173,7 @@ export const Incidents = () => {
               <tbody>
                 {visibleIncidents.length === 0 ? (
                   <tr>
-                    <td colSpan="9" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 20px' }}>
+                    <td colSpan="10" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 20px' }}>
                       <i className="fa-solid fa-circle-check text-green" style={{ fontSize: '1.8rem', marginBottom: '8px', display: 'block' }}></i>
                       {statusFilter === 'open' 
                         ? 'No active open incidents. All stations are operating within nominal thresholds.'
@@ -187,14 +203,32 @@ export const Incidents = () => {
                       <td style={{ whiteSpace: 'nowrap' }}><code>{inc.variable}</code></td>
                       <td><span className={`cyber-badge ${stateBadge}`}>{displayCode(inc.quality_state)}</span></td>
                       <td style={{ fontWeight: 'bold', color: (inc.fault_risk || 0) >= 0.7 ? 'var(--neon-crimson)' : 'var(--neon-amber)', whiteSpace: 'nowrap' }}>
-                        {inc.fault_risk}
+                        {formatRisk(inc.fault_risk)}
                       </td>
-                      <td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {inc.reasoning ? (
+                          <>
+                            <span className={`cyber-badge ${PRIORITY_BADGE[inc.reasoning.priority]}`}>{inc.reasoning.priority}</span>
+                            <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', marginTop: '3px' }}>{inc.reasoning.priority_label}</div>
+                          </>
+                        ) : '—'}
+                      </td>
+                      <td style={{ minWidth: '280px', maxWidth: '420px' }}>
+                        {inc.reasoning?.headline || inc.explanation ? (
+                          <div style={{ fontSize: '0.74rem', color: 'var(--text-primary)', lineHeight: 1.4, marginBottom: '5px', whiteSpace: 'normal' }}>
+                            {inc.reasoning?.headline || inc.explanation}
+                          </div>
+                        ) : null}
                         <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                          {(inc.reason_codes || []).map((rc, idx) => (
-                            <span key={idx} className={`cyber-badge ${badgeClass}`} style={{ fontSize: '0.65rem' }}>{rc}</span>
+                          {(inc.reasoning?.reason_codes || inc.reason_codes || []).map((rc, idx) => (
+                            <span key={idx} className={`cyber-badge ${badgeClass}`} style={{ fontSize: '0.62rem' }}>{rc}</span>
                           ))}
                         </div>
+                        {inc.reasoning && !isClosedIncident(inc) && (
+                          <div style={{ fontSize: '0.68rem', color: 'var(--neon-cyan)', marginTop: '5px', whiteSpace: 'normal' }}>
+                            <i className="fa-solid fa-arrow-right"></i> Suggested: {ACTION_LABELS[inc.reasoning.suggested_action]} — {inc.reasoning.suggested_action_reason}
+                          </div>
+                        )}
                       </td>
                       <td><span className={`cyber-badge ${statusBadge}`}>{(inc.status || 'open').toUpperCase()}</span></td>
                       <td>

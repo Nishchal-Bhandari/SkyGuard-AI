@@ -8,6 +8,7 @@ import uuid
 from backend.app.storage.database import get_db, fetch_historical_telemetry, insert_assessment_with_sequence_recovery
 from backend.app.services.training_service import training_service
 from backend.app.services.model_storage import model_storage_service
+from backend.app.services.incident_reasoning import build_reasoning
 from ml.feature_engine import instant, readiness, valid_core, feature_engine, PARAMETERS
 from ml.thermo_engine import thermo_engine
 from ml.sensor_health import sensor_health_engine
@@ -325,16 +326,18 @@ class ObservationPipeline:
             return
         param=max(a['observed'],key=lambda k:abs(a['residuals'][('temp','hum','pres').index(k)])) if a['residuals'] else 'core'
         identity=f"{param}:{a['root_cause']}"
+        reasoning=build_reasoning({'variable':identity,'quality_state':a['classification'],'fault_risk':a['anomaly_probability'],'status':'open','evidence_data':state})
+        actions=[step for step in reasoning['handling_steps'] if not step.startswith('The incident auto-resolves')]
         cur.execute("SELECT id FROM incidents WHERE station_id=? AND variable=? AND status='open'",(sid,identity))
         existing=cur.fetchone()
         if existing:
-            cur.execute('UPDATE incidents SET evidence_data=?,updated_at=?,severity=?,quality_state=? WHERE id=?',
-                (canonical(state),now,a['severity'].lower(),a['classification'],existing['id']))
+            cur.execute('UPDATE incidents SET evidence_data=?,updated_at=?,severity=?,quality_state=?,fault_risk=?,reason_codes=?,explanation=?,recommended_actions=? WHERE id=?',
+                (canonical(state),now,a['severity'].lower(),a['classification'],a['anomaly_probability'],canonical(reasoning['reason_codes']),reasoning['headline'],canonical(actions),existing['id']))
         else:
             cur.execute('''INSERT INTO incidents(id,station_id,station_name,variable,severity,fault_risk,quality_state,reason_codes,
                 explanation,recommended_actions,evidence_ids,evidence_data,status,created_at,updated_at)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',('INC-'+uuid.uuid4().hex,sid,station['station_name'],identity,a['severity'].lower(),a['anomaly_probability'],a['classification'],
-                    canonical([a['root_cause']]),a['interpretation'],canonical([a['root_cause_diagnosis']['recommended_action']]),canonical([a['observation_id']]),canonical(state),'open',now,now))
+                    canonical(reasoning['reason_codes']),reasoning['headline'],canonical(actions),canonical([a['observation_id']]),canonical(state),'open',now,now))
 
     def batch(self,station_id,rows,source='OBSERVATION'):
         if not isinstance(rows,list) or not 1<=len(rows)<=10000:
