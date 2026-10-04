@@ -159,8 +159,13 @@ def test_five_station_regional_persistence(station):
             if sid == ids[-1]:
                 last = state['final_assessment']
                 if timestamp == t1:
-                    assert last['classification'] == 'LOCALIZED_ANOMALY'
+                    # Peers agree but persistence is unproven: held, with no sensor-fault attribution or health penalty.
+                    assert last['classification'] == 'LOCALIZED_ANOMALY_UNCONFIRMED'
                     assert last['regional_candidate']
+                    assert last['root_cause'] == 'REGIONAL_WEATHER_FRONT'
+                    assert last['severity'] == 'MEDIUM'
+                    assert last['imputation'] == {}
+                    assert state['sensor_health']['overall_health_score'] == 100
     assert last['classification'] == 'REGIONAL_EVENT'
     assert last['fleet_evidence']['eligible_peer_count'] >= 2
     assert last['root_cause'] == 'REGIONAL_WEATHER_FRONT'
@@ -260,3 +265,22 @@ def test_local_fault_imputation_preserves_raw_and_peer_provenance(station):
         stored = cur.fetchone()
         assert stored['parameter'] == 'temperature' and stored['raw_value'] == 33
         assert set(json.loads(stored['peer_list'])) == set(peers)
+
+def test_extreme_single_channel_departure_is_not_vetoed(station):
+    sid, _, _ = station
+    start = dt.datetime(2026, 8, 1, tzinfo=dt.timezone.utc)
+    rows = []
+    for hour in range(72):
+        phase = 2 * math.pi * (hour % 24) / 24
+        rows.append({'timestamp': (start + dt.timedelta(hours=hour)).isoformat(),
+            'temp': 25 + 2 * math.sin(phase), 'hum': 60 + 3 * math.cos(phase),
+            'pres': 1013 + .5 * math.sin(phase), 'wind': 4., 'rain': 0.})
+    assert insert_telemetry_batch(sid, rows)[0] == 72
+    phase = 2 * math.pi * (72 % 24) / 24
+    # A 20-point humidity bias is gradual enough to avoid the temporal-step rule and no model is trained.
+    state = observation_pipeline.process(sid, frame((start + dt.timedelta(hours=72)).isoformat(), temp=25 + 2 * math.sin(phase),
+        hum=80 + 3 * math.cos(phase), pres=1013 + .5 * math.sin(phase)))['state']
+    assessment = state['final_assessment']
+    assert assessment['evidence_vector']['z_qc'] == 1.0 and not assessment['evidence_vector']['z_temp']
+    assert assessment['classification'] in ('LOCALIZED_ANOMALY', 'LOCALIZED_ANOMALY_UNCONFIRMED')
+    assert assessment['root_cause'] not in ('NOMINAL', 'REGIONAL_WEATHER_FRONT')
