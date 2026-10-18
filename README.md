@@ -314,6 +314,25 @@ A station needs **at least 720 clean distinct observations across 14 days** befo
 
 ---
 
+## Render deployment and switching Neon databases
+
+If the build succeeds but startup reports `DEFAULT_ADMIN_PASSWORD must be at least 12 characters outside DEMO_MODE`, configuration validation stopped the app before it connected to the database.
+
+In the Render **backend service > Environment**, configure:
+
+| Variable | Value |
+| --- | --- |
+| `DATABASE_URL` | Your new Neon's PostgreSQL connection URI, including its SSL parameters. Paste the URI alone, without a `psql` command or surrounding quotes. |
+| `DEFAULT_ADMIN_USERNAME` | Your desired admin username (defaults to `admin`). |
+| `DEFAULT_ADMIN_PASSWORD` | A unique password of at least 12 characters for the SkyGuard admin login; this is separate from the database password. |
+| `SKYGUARD_SECRET_KEY` | Keep your existing production signing secret; configure a strong random secret if missing. |
+| `DEMO_MODE` | `false` |
+| `ALLOWED_ORIGINS` | Your Vercel frontend origin, such as `https://your-project.vercel.app` (no trailing slash). |
+
+Select **Save and deploy** to apply environment changes to the existing build, or **Save, rebuild, and deploy** to include code changes. See [Render's environment variable instructions](https://render.com/docs/configure-environment-variables).
+
+The backend creates its schema and seeds the configured admin if that username does not exist. Log in with the configured admin credentials on a fresh database. Changing the connection URI does not migrate accounts or telemetry from the old database, and changing the seed password does not reset an existing account. Keep backend credentials in Render; do not expose them as frontend `VITE_*` variables. Keep production demo mode disabled.
+
 ## Current verification
 
 The current [implementation report](DOCS/FINAL_IMPLEMENTATION_REPORT.md) and [machine-readable evidence](DOCS/status_audit_evidence.json) describe what has been tested and what remains. Model cards report an unlabelled temporal holdout anomaly rate and explicitly labelled synthetic-spike recall. No current field precision, recall, root-cause accuracy, or throughput claim has been established.

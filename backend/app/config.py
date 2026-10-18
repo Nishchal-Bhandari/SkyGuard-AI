@@ -57,11 +57,21 @@ if not _env_secret:
 SECRET_KEY = _env_secret
 TOKEN_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 Hours
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+# Browser Origin headers contain no trailing slash. Normalize dashboard values.
+ALLOWED_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
 
 # Default Seed Configuration (Used only on clean database first initialization)
 DEFAULT_ADMIN_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
 DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "sentinel2026" if DEMO_MODE else "")
 if not DEMO_MODE and len(DEFAULT_ADMIN_PASSWORD) < 12:
-    raise RuntimeError("DEFAULT_ADMIN_PASSWORD must be at least 12 characters outside DEMO_MODE")
+    raise RuntimeError(
+        "DEFAULT_ADMIN_PASSWORD must be at least 12 characters outside DEMO_MODE. "
+        "Set it in the backend service environment (Render: Environment), then save and deploy. "
+        "This is the initial SkyGuard admin login password, not the Neon database password. "
+        "Changing DATABASE_URL does not configure this value."
+    )
 DEFAULT_ADMIN_NAME = os.getenv("DEFAULT_ADMIN_NAME", "Chief Supervisor")

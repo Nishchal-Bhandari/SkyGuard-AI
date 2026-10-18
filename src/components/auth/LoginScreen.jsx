@@ -98,6 +98,26 @@ export const LoginScreen = () => {
             </span>
           </div>
 
+          {activeTab === 'admin' && (
+            <section className="demo-helper-box evaluator-access" aria-labelledby="evaluator-access-title">
+              <div className="demo-helper-title" id="evaluator-access-title">
+                <i className="fa-solid fa-graduation-cap" aria-hidden="true"></i>
+                <span>FOR SIH EVALUATORS</span>
+              </div>
+              <p>Use these credentials to evaluate SkyGuard-AI.</p>
+              <div>Username: <code>admin</code></div>
+              <div>Password: <code>Sentinel2026</code></div>
+              <button
+                type="button"
+                className="demo-pill"
+                disabled={loading}
+                onClick={() => handleDemoFill('admin', 'Sentinel2026')}
+              >
+                Fill evaluator credentials
+              </button>
+            </section>
+          )}
+
           <form id="auth-login-form" onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             {/* Username Input */}
             <div className="cyber-input-group">

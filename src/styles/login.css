@@ -288,6 +288,27 @@
 }
 
 /* Demo Credentials Quick-Select Pill Helper */
+.evaluator-access {
+  border-color: var(--neon-cyan);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.evaluator-access .demo-helper-title,
+.evaluator-access code {
+  color: var(--neon-cyan);
+}
+
+.evaluator-access p {
+  margin: 0 0 4px;
+}
+
+.evaluator-access .demo-pill {
+  align-self: flex-start;
+  padding: 8px 12px;
+  margin-top: 6px;
+}
+
 .demo-helper-box {
   background: rgba(5, 8, 17, 0.6);
   border: 1px solid var(--border-subtle);
